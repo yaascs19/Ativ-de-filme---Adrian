@@ -1,0 +1,6 @@
+{
+  "name": "DSA 2026 — Quiz de Revisão JavaScript",
+  "description": "Aplicativo web em ReactJS para revisão de JavaScript (variáveis, condicionais, laços de repetição, arrays e funções) com persistência em localStorage e simulador interativo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

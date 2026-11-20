@@ -1,0 +1,177 @@
+{
+  "movies": [
+    {
+      "id": "mov-como-eu-era",
+      "title": "Como Eu Era Antes de Você",
+      "director": "Thea Sharrock",
+      "year": 2016,
+      "durationMinutes": 110,
+      "genre": "Romance",
+      "synopsis": "Louisa Clark aceita trabalhar como cuidadora de Will Traynor, um jovem banqueiro tetraplégico que recuperará a vontade de viver ao lado do jeito vibrante dela.",
+      "recommendedBy": "Marina Silva",
+      "recommendationNote": "Prepare o lenço! Romance emocionante com química incrível entre os protagonistas.",
+      "posterUrl": "/assets/aistudio/filme1_a0effce9.jpg",
+      "rating": 4.8,
+      "votedBy": [
+        "seed-1",
+        "seed-2",
+        "seed-3",
+        "seed-4"
+      ],
+      "createdAt": 1795204362504,
+      "likedBy": [
+        "seed-1",
+        "seed-2",
+        "seed-3",
+        "seed-4"
+      ],
+      "dislikedBy": []
+    },
+    {
+      "id": "mov-pequeno-principe",
+      "title": "O Pequeno Príncipe",
+      "director": "Mark Osborne",
+      "year": 2015,
+      "durationMinutes": 108,
+      "genre": "Animação",
+      "synopsis": "Uma garota metódica conhece o vizinho aviador, que lhe apresenta as aventuras do Pequeno Príncipe e a importância de enxergar com o coração.",
+      "recommendedBy": "Lucas Andrade",
+      "recommendationNote": "Animação poética que mistura CGI e stop-motion, perfeita para qualquer idade.",
+      "posterUrl": "/assets/aistudio/filme2_ba15de3e.jpg",
+      "rating": 4.9,
+      "votedBy": [
+        "seed-1",
+        "seed-2",
+        "seed-5"
+      ],
+      "createdAt": 1795206162504,
+      "likedBy": [
+        "seed-1",
+        "seed-2",
+        "seed-5"
+      ],
+      "dislikedBy": []
+    },
+    {
+      "id": "mov-homem-aranha",
+      "title": "Homem-Aranha: Um Novo Dia",
+      "director": "Destin Daniel Cretton",
+      "year": 2026,
+      "durationMinutes": 138,
+      "genre": "Ação",
+      "synopsis": "Em um recomeço solitário em Nova York, Peter Parker precisa equilibrar a vida anônima de estudante universitário com novas ameaças nas ruas da cidade.",
+      "recommendedBy": "Beatriz Costa",
+      "recommendationNote": "Ação eletrizante, clima urbano clássico do herói e ótimo gancho dramático.",
+      "posterUrl": "/assets/aistudio/filme3_f5e4cc7c.jpg",
+      "rating": 4.7,
+      "votedBy": [
+        "seed-2",
+        "seed-3",
+        "seed-4"
+      ],
+      "createdAt": 1795207962504,
+      "likedBy": [
+        "seed-2",
+        "seed-3",
+        "seed-4"
+      ],
+      "dislikedBy": []
+    },
+    {
+      "id": "mov-sing",
+      "title": "Sing",
+      "director": "Garth Jennings",
+      "year": 2016,
+      "durationMinutes": 108,
+      "genre": "Animação",
+      "synopsis": "Para salvar seu teatro falido, o coala Buster Moon organiza uma grande competição de canto que reúne talentos improváveis da cidade.",
+      "recommendedBy": "Sofia Almeida",
+      "recommendationNote": "Divertido do início ao fim e com uma trilha sonora cheia de sucessos.",
+      "posterUrl": "/assets/aistudio/filme4_7f9fb5f4.jpg",
+      "rating": 4.6,
+      "votedBy": [
+        "seed-1",
+        "seed-3",
+        "seed-5"
+      ],
+      "createdAt": 1795209762504,
+      "likedBy": [
+        "seed-1",
+        "seed-3",
+        "seed-5"
+      ],
+      "dislikedBy": []
+    },
+    {
+      "id": "mov-wicked",
+      "title": "Wicked",
+      "director": "Jon M. Chu",
+      "year": 2024,
+      "durationMinutes": 160,
+      "genre": "Musical",
+      "synopsis": "Antes de Dorothy chegar a Oz, a incompreendida Elphaba e a popular Glinda constroem uma amizade improvável na Universidade de Shiz.",
+      "recommendedBy": "Gabriel Rocha",
+      "recommendationNote": "Cenários grandiosos, vocais impressionantes e figurinos impecáveis.",
+      "posterUrl": "/assets/aistudio/filme8_195fa374.jpg",
+      "rating": 4.8,
+      "votedBy": [
+        "seed-1",
+        "seed-4",
+        "seed-6"
+      ],
+      "createdAt": 1795211562504,
+      "likedBy": [
+        "seed-1",
+        "seed-4",
+        "seed-6"
+      ],
+      "dislikedBy": []
+    },
+    {
+      "id": "mov-minha-melhor-amiga",
+      "title": "Minha Melhor Amiga",
+      "director": "Susana Garcia",
+      "year": 2025,
+      "durationMinutes": 105,
+      "genre": "Comédia",
+      "synopsis": "Duas amigas inseparáveis embarcam em uma viagem cheia de confusões, reencontros e momentos hilários que colocam sua parceria à prova.",
+      "recommendedBy": "Rafael Lima",
+      "recommendationNote": "Comédia nacional leve e certeira para dar boas risadas em grupo.",
+      "posterUrl": "/assets/aistudio/filme6_6b1c72a1.jpg",
+      "rating": 4.5,
+      "votedBy": [
+        "seed-2",
+        "seed-5"
+      ],
+      "createdAt": 1795213362504,
+      "likedBy": [
+        "seed-2",
+        "seed-5"
+      ],
+      "dislikedBy": []
+    }
+  ],
+  "messages": [
+    {
+      "id": "msg-seed-1",
+      "author": "Marina Silva",
+      "text": "Se você quer um romance para chorar de verdade, assista Como Eu Era Antes de Você!",
+      "attachedMovieId": "mov-como-eu-era",
+      "createdAt": 1795213662504
+    },
+    {
+      "id": "msg-seed-2",
+      "author": "Gabriel Rocha",
+      "text": "Concordo! E quem curte musical não pode deixar de ver Wicked.",
+      "attachedMovieId": "mov-wicked",
+      "createdAt": 1795214322504
+    },
+    {
+      "id": "msg-seed-3",
+      "author": "Beatriz Costa",
+      "text": "Alguém já assistiu Homem-Aranha: Um Novo Dia ou quer indicar outro filme de ação?",
+      "attachedMovieId": "mov-homem-aranha",
+      "createdAt": 1795214862504
+    }
+  ]
+}

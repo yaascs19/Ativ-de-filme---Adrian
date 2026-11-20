@@ -1,0 +1,39 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Outfit", system-ui, sans-serif;
+  --font-serif-editorial: "Playfair Display", Georgia, serif;
+  --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Paleta Editorial Cinema (Adobe Color 60-30-10) */
+  --color-canvas: #f8f9fb;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #f1f5f9;
+  --color-border-hairline: #e2e8f0;
+  --color-ink-primary: #111827;
+  --color-ink-secondary: #475569;
+  --color-ink-muted: #64748b;
+  --color-cinema-red: #e11d48;
+  --color-cinema-red-hover: #be123c;
+  --color-cinema-emerald: #059669;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    scroll-behavior: smooth;
+  }
+
+  h1, h2, h3, .font-display {
+    font-family: var(--font-display);
+  }
+
+  .font-editorial {
+    font-family: var(--font-serif-editorial);
+  }
+
+  code, pre, .font-mono {
+    font-family: var(--font-mono);
+  }
+}

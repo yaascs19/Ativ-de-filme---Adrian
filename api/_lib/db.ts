@@ -1,0 +1,706 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import sql from 'mssql';
+
+export type MovieGenre =
+  | 'Romance'
+  | 'Animação'
+  | 'Ação'
+  | 'Musical'
+  | 'Comédia';
+
+export type EvaluationChoice = 'like' | 'dislike';
+
+export interface MovieRecord {
+  id: string;
+  title: string;
+  director: string;
+  year: number;
+  durationMinutes: number;
+  genre: MovieGenre;
+  synopsis: string;
+  recommendedBy: string;
+  recommendationNote: string;
+  posterUrl: string;
+  rating: number;
+  likedBy: string[];
+  dislikedBy: string[];
+  createdAt: number;
+}
+
+export interface ChatMessageRecord {
+  id: string;
+  author: string;
+  text: string;
+  attachedMovieId?: string;
+  createdAt: number;
+}
+
+interface LocalDatabaseSchema {
+  movies: MovieRecord[];
+  messages: ChatMessageRecord[];
+}
+
+export const VALID_GENRES: MovieGenre[] = [
+  'Romance',
+  'Animação',
+  'Ação',
+  'Musical',
+  'Comédia',
+];
+
+const ALLOWED_POSTERS = new Set<string>([
+  '/assets/aistudio/filme1_a0effce9.jpg',
+  '/assets/aistudio/filme2_ba15de3e.jpg',
+  '/assets/aistudio/filme3_f5e4cc7c.jpg',
+  '/assets/aistudio/filme4_7f9fb5f4.jpg',
+  '/assets/aistudio/filme8_195fa374.jpg',
+  '/assets/aistudio/filme6_6b1c72a1.jpg',
+]);
+
+export function sanitizeText(value: unknown, maxLen: number): string {
+  if (typeof value !== 'string') return '';
+  return value.trim().replace(/\s+/g, ' ').slice(0, maxLen);
+}
+
+export function sanitizePosterUrl(value: unknown): string {
+  const fallback = '/assets/aistudio/filme1_a0effce9.jpg';
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim().slice(0, 500);
+  if (!trimmed) return fallback;
+  if (ALLOWED_POSTERS.has(trimmed)) return trimmed;
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+      return parsed.toString();
+    }
+  } catch {
+    return fallback;
+  }
+  return fallback;
+}
+
+export function isSqlServerConfigured(): boolean {
+  if (process.env.SQLSERVER_CONNECTION_STRING) return true;
+  return Boolean(
+    process.env.SQLSERVER_SERVER &&
+      process.env.SQLSERVER_DATABASE &&
+      process.env.SQLSERVER_USER &&
+      process.env.SQLSERVER_PASSWORD
+  );
+}
+
+let sqlPoolPromise: Promise<sql.ConnectionPool> | null = null;
+
+async function getSqlPool(): Promise<sql.ConnectionPool> {
+  if (sqlPoolPromise) {
+    const existing = await sqlPoolPromise;
+    if (existing.connected) return existing;
+    sqlPoolPromise = null;
+  }
+
+  const connStr = process.env.SQLSERVER_CONNECTION_STRING;
+  const connectPromise = connStr
+    ? new sql.ConnectionPool(connStr).connect()
+    : new sql.ConnectionPool({
+        server: process.env.SQLSERVER_SERVER || '',
+        database: process.env.SQLSERVER_DATABASE || '',
+        user: process.env.SQLSERVER_USER || '',
+        password: process.env.SQLSERVER_PASSWORD || '',
+        port: Number(process.env.SQLSERVER_PORT) || 1433,
+        options: {
+          encrypt: process.env.SQLSERVER_ENCRYPT === 'true',
+          trustServerCertificate: true,
+        },
+        pool: {
+          max: 5,
+          min: 0,
+          idleTimeoutMillis: 15000,
+        },
+      }).connect();
+
+  sqlPoolPromise = connectPromise.catch((err) => {
+    sqlPoolPromise = null;
+    throw err;
+  });
+
+  return sqlPoolPromise;
+}
+
+// ---------------------------------------------------------------------------
+// Armazenamento JSON local para desenvolvimento/preview sem SQL Server
+// ---------------------------------------------------------------------------
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DATA_DIR = path.resolve(__dirname, '../../data');
+const DB_PATH = path.resolve(DATA_DIR, 'cineclube.db.json');
+
+function createSeedDatabase(): LocalDatabaseSchema {
+  const now = Date.now();
+  return {
+    movies: [
+      {
+        id: 'mov-como-eu-era',
+        title: 'Como Eu Era Antes de Você',
+        director: 'Thea Sharrock',
+        year: 2016,
+        durationMinutes: 110,
+        genre: 'Romance',
+        synopsis:
+          'Louisa Clark aceita trabalhar como cuidadora de Will Traynor, um jovem banqueiro tetraplégico que recuperará a vontade de viver ao lado do jeito vibrante dela.',
+        recommendedBy: 'Marina Silva',
+        recommendationNote:
+          'Prepare o lenço! Romance emocionante com química incrível entre os protagonistas.',
+        posterUrl: '/assets/aistudio/filme1_a0effce9.jpg',
+        rating: 4.8,
+        likedBy: ['seed-1', 'seed-2', 'seed-3', 'seed-4'],
+        dislikedBy: [],
+        createdAt: now - 1000 * 60 * 180,
+      },
+      {
+        id: 'mov-pequeno-principe',
+        title: 'O Pequeno Príncipe',
+        director: 'Mark Osborne',
+        year: 2015,
+        durationMinutes: 108,
+        genre: 'Animação',
+        synopsis:
+          'Uma garota metódica conhece o vizinho aviador, que lhe apresenta as aventuras do Pequeno Príncipe e a importância de enxergar com o coração.',
+        recommendedBy: 'Lucas Andrade',
+        recommendationNote:
+          'Animação poética que mistura CGI e stop-motion, perfeita para qualquer idade.',
+        posterUrl: '/assets/aistudio/filme2_ba15de3e.jpg',
+        rating: 4.9,
+        likedBy: ['seed-1', 'seed-2', 'seed-5'],
+        dislikedBy: [],
+        createdAt: now - 1000 * 60 * 150,
+      },
+      {
+        id: 'mov-homem-aranha',
+        title: 'Homem-Aranha: Um Novo Dia',
+        director: 'Destin Daniel Cretton',
+        year: 2026,
+        durationMinutes: 138,
+        genre: 'Ação',
+        synopsis:
+          'Em um recomeço solitário em Nova York, Peter Parker precisa equilibrar a vida anônima de estudante universitário com novas ameaças nas ruas da cidade.',
+        recommendedBy: 'Beatriz Costa',
+        recommendationNote:
+          'Ação eletrizante, clima urbano clássico do herói e ótimo gancho dramático.',
+        posterUrl: '/assets/aistudio/filme3_f5e4cc7c.jpg',
+        rating: 4.7,
+        likedBy: ['seed-2', 'seed-3', 'seed-4'],
+        dislikedBy: [],
+        createdAt: now - 1000 * 60 * 120,
+      },
+      {
+        id: 'mov-sing',
+        title: 'Sing',
+        director: 'Garth Jennings',
+        year: 2016,
+        durationMinutes: 108,
+        genre: 'Animação',
+        synopsis:
+          'Para salvar seu teatro falido, o coala Buster Moon organiza uma grande competição de canto que reúne talentos improváveis da cidade.',
+        recommendedBy: 'Sofia Almeida',
+        recommendationNote:
+          'Divertido do início ao fim e com uma trilha sonora cheia de sucessos.',
+        posterUrl: '/assets/aistudio/filme4_7f9fb5f4.jpg',
+        rating: 4.6,
+        likedBy: ['seed-1', 'seed-3', 'seed-5'],
+        dislikedBy: ['seed-6'],
+        createdAt: now - 1000 * 60 * 90,
+      },
+      {
+        id: 'mov-wicked',
+        title: 'Wicked',
+        director: 'Jon M. Chu',
+        year: 2024,
+        durationMinutes: 160,
+        genre: 'Musical',
+        synopsis:
+          'Antes de Dorothy chegar a Oz, a incompreendida Elphaba e a popular Glinda constroem uma amizade improvável na Universidade de Shiz.',
+        recommendedBy: 'Gabriel Rocha',
+        recommendationNote:
+          'Cenários grandiosos, vocais impressionantes e figurinos impecáveis.',
+        posterUrl: '/assets/aistudio/filme8_195fa374.jpg',
+        rating: 4.8,
+        likedBy: ['seed-1', 'seed-4', 'seed-6'],
+        dislikedBy: [],
+        createdAt: now - 1000 * 60 * 60,
+      },
+      {
+        id: 'mov-minha-melhor-amiga',
+        title: 'Minha Melhor Amiga',
+        director: 'Susana Garcia',
+        year: 2025,
+        durationMinutes: 105,
+        genre: 'Comédia',
+        synopsis:
+          'Duas amigas inseparáveis embarcam em uma viagem cheia de confusões, reencontros e momentos hilários que colocam sua parceria à prova.',
+        recommendedBy: 'Rafael Lima',
+        recommendationNote:
+          'Comédia nacional leve e certeira para dar boas risadas em grupo.',
+        posterUrl: '/assets/aistudio/filme6_6b1c72a1.jpg',
+        rating: 4.5,
+        likedBy: ['seed-2', 'seed-5'],
+        dislikedBy: [],
+        createdAt: now - 1000 * 60 * 30,
+      },
+    ],
+    messages: [
+      {
+        id: 'msg-seed-1',
+        author: 'Marina Silva',
+        text: 'Se você quer um romance para chorar de verdade, assista Como Eu Era Antes de Você!',
+        attachedMovieId: 'mov-como-eu-era',
+        createdAt: now - 1000 * 60 * 25,
+      },
+      {
+        id: 'msg-seed-2',
+        author: 'Gabriel Rocha',
+        text: 'Concordo! E quem curte musical não pode deixar de ver Wicked.',
+        attachedMovieId: 'mov-wicked',
+        createdAt: now - 1000 * 60 * 14,
+      },
+      {
+        id: 'msg-seed-3',
+        author: 'Beatriz Costa',
+        text: 'Alguém já assistiu Homem-Aranha: Um Novo Dia ou quer indicar outro filme de ação?',
+        attachedMovieId: 'mov-homem-aranha',
+        createdAt: now - 1000 * 60 * 5,
+      },
+    ],
+  };
+}
+
+function loadLocalDb(): LocalDatabaseSchema {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (!fs.existsSync(DB_PATH)) {
+      const seed = createSeedDatabase();
+      saveLocalDb(seed);
+      return seed;
+    }
+    const raw = fs.readFileSync(DB_PATH, 'utf-8');
+    const parsed = JSON.parse(raw) as Partial<LocalDatabaseSchema>;
+    if (!Array.isArray(parsed.movies) || !Array.isArray(parsed.messages)) {
+      const seed = createSeedDatabase();
+      saveLocalDb(seed);
+      return seed;
+    }
+    return {
+      movies: parsed.movies.map((m) => ({
+        ...m,
+        likedBy: Array.isArray(m.likedBy) ? m.likedBy : [],
+        dislikedBy: Array.isArray(m.dislikedBy) ? m.dislikedBy : [],
+      })),
+      messages: parsed.messages,
+    };
+  } catch {
+    return createSeedDatabase();
+  }
+}
+
+function saveLocalDb(data: LocalDatabaseSchema): void {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+  const tmpPath = `${DB_PATH}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
+  fs.renameSync(tmpPath, DB_PATH);
+}
+
+// ---------------------------------------------------------------------------
+// Operações públicas (SQL Server quando configurado, JSON local caso contrário)
+// ---------------------------------------------------------------------------
+
+interface SqlMovieRow {
+  Id: number;
+  Titulo: string;
+  Diretor: string;
+  AnoLancamento: number;
+  DuracaoMinutos: number;
+  Genero: MovieGenre;
+  Sinopse: string;
+  IndicadoPor: string;
+  MotivoIndicacao: string;
+  PosterUrl: string;
+  NotaMedia: number;
+  CriadoEm: Date;
+}
+
+interface SqlEvalRow {
+  FilmeId: number;
+  IdentificadorUsuario: string;
+  Gostou: boolean;
+}
+
+interface SqlChatRow {
+  Id: number;
+  Autor: string;
+  Texto: string;
+  FilmeAnexadoId: number | null;
+  CriadoEm: Date;
+}
+
+function mapSqlMovies(movieRows: SqlMovieRow[], evalRows: SqlEvalRow[]): MovieRecord[] {
+  const likesMap = new Map<number, string[]>();
+  const dislikesMap = new Map<number, string[]>();
+
+  for (const ev of evalRows) {
+    if (ev.Gostou) {
+      const list = likesMap.get(ev.FilmeId) ?? [];
+      list.push(ev.IdentificadorUsuario);
+      likesMap.set(ev.FilmeId, list);
+    } else {
+      const list = dislikesMap.get(ev.FilmeId) ?? [];
+      list.push(ev.IdentificadorUsuario);
+      dislikesMap.set(ev.FilmeId, list);
+    }
+  }
+
+  return movieRows.map((row) => ({
+    id: String(row.Id),
+    title: row.Titulo,
+    director: row.Diretor,
+    year: row.AnoLancamento,
+    durationMinutes: row.DuracaoMinutos,
+    genre: row.Genero,
+    synopsis: row.Sinopse,
+    recommendedBy: row.IndicadoPor,
+    recommendationNote: row.MotivoIndicacao,
+    posterUrl: row.PosterUrl,
+    rating: Number(row.NotaMedia),
+    likedBy: likesMap.get(row.Id) ?? [],
+    dislikedBy: dislikesMap.get(row.Id) ?? [],
+    createdAt: new Date(row.CriadoEm).getTime(),
+  }));
+}
+
+export async function getHealthStatus(): Promise<{
+  ok: boolean;
+  driver: 'sqlserver' | 'local-json';
+  moviesCount: number;
+  messagesCount: number;
+}> {
+  if (!isSqlServerConfigured()) {
+    const db = loadLocalDb();
+    return {
+      ok: true,
+      driver: 'local-json',
+      moviesCount: db.movies.length,
+      messagesCount: db.messages.length,
+    };
+  }
+
+  const pool = await getSqlPool();
+  const result = await pool.request().query<{ moviesCount: number; messagesCount: number }>(`
+    SELECT
+      (SELECT COUNT(*) FROM dbo.Filmes) AS moviesCount,
+      (SELECT COUNT(*) FROM dbo.MensagensChat) AS messagesCount
+  `);
+  const row = result.recordset[0];
+  return {
+    ok: true,
+    driver: 'sqlserver',
+    moviesCount: row?.moviesCount ?? 0,
+    messagesCount: row?.messagesCount ?? 0,
+  };
+}
+
+export async function listMovies(): Promise<MovieRecord[]> {
+  if (!isSqlServerConfigured()) {
+    return loadLocalDb().movies;
+  }
+
+  const pool = await getSqlPool();
+  const [moviesRes, evalsRes] = await Promise.all([
+    pool.request().query<SqlMovieRow>(`
+      SELECT Id, Titulo, Diretor, AnoLancamento, DuracaoMinutos, Genero,
+             Sinopse, IndicadoPor, MotivoIndicacao, PosterUrl, NotaMedia, CriadoEm
+      FROM dbo.Filmes
+      ORDER BY CriadoEm DESC, Id DESC
+    `),
+    pool.request().query<SqlEvalRow>(`
+      SELECT FilmeId, IdentificadorUsuario, Gostou
+      FROM dbo.AvaliacoesFilmes
+    `),
+  ]);
+
+  return mapSqlMovies(moviesRes.recordset, evalsRes.recordset);
+}
+
+export interface CreateMovieInput {
+  title: string;
+  director: string;
+  year: number;
+  durationMinutes: number;
+  genre: MovieGenre;
+  synopsis: string;
+  recommendedBy: string;
+  recommendationNote: string;
+  posterUrl: string;
+  rating: number;
+  clientId: string;
+}
+
+export async function createMovie(input: CreateMovieInput): Promise<MovieRecord> {
+  if (!isSqlServerConfigured()) {
+    const db = loadLocalDb();
+    const newMovie: MovieRecord = {
+      id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      title: input.title,
+      director: input.director,
+      year: input.year,
+      durationMinutes: input.durationMinutes,
+      genre: input.genre,
+      synopsis: input.synopsis,
+      recommendedBy: input.recommendedBy,
+      recommendationNote: input.recommendationNote,
+      posterUrl: input.posterUrl,
+      rating: input.rating,
+      likedBy: [input.clientId],
+      dislikedBy: [],
+      createdAt: Date.now(),
+    };
+    db.movies = [newMovie, ...db.movies];
+    saveLocalDb(db);
+    return newMovie;
+  }
+
+  const pool = await getSqlPool();
+  const insertRes = await pool
+    .request()
+    .input('Titulo', sql.NVarChar(100), input.title)
+    .input('Diretor', sql.NVarChar(80), input.director)
+    .input('AnoLancamento', sql.Int, input.year)
+    .input('DuracaoMinutos', sql.Int, input.durationMinutes)
+    .input('Genero', sql.NVarChar(40), input.genre)
+    .input('Sinopse', sql.NVarChar(400), input.synopsis)
+    .input('IndicadoPor', sql.NVarChar(40), input.recommendedBy)
+    .input('MotivoIndicacao', sql.NVarChar(240), input.recommendationNote)
+    .input('PosterUrl', sql.NVarChar(500), input.posterUrl)
+    .input('NotaMedia', sql.Decimal(2, 1), input.rating)
+    .query<SqlMovieRow>(`
+      INSERT INTO dbo.Filmes (
+        Titulo, Diretor, AnoLancamento, DuracaoMinutos, Genero,
+        Sinopse, IndicadoPor, MotivoIndicacao, PosterUrl, NotaMedia
+      )
+      OUTPUT INSERTED.*
+      VALUES (
+        @Titulo, @Diretor, @AnoLancamento, @DuracaoMinutos, @Genero,
+        @Sinopse, @IndicadoPor, @MotivoIndicacao, @PosterUrl, @NotaMedia
+      )
+    `);
+
+  const created = insertRes.recordset[0];
+
+  await pool
+    .request()
+    .input('FilmeId', sql.Int, created.Id)
+    .input('Usuario', sql.NVarChar(64), input.clientId)
+    .input('Gostou', sql.Bit, 1)
+    .query(`
+      INSERT INTO dbo.AvaliacoesFilmes (FilmeId, IdentificadorUsuario, Gostou)
+      VALUES (@FilmeId, @Usuario, @Gostou)
+    `);
+
+  return mapSqlMovies([created], [
+    { FilmeId: created.Id, IdentificadorUsuario: input.clientId, Gostou: true },
+  ])[0];
+}
+
+export async function evaluateMovie(
+  movieId: string,
+  clientId: string,
+  choice: EvaluationChoice
+): Promise<MovieRecord | null> {
+  if (!isSqlServerConfigured()) {
+    const db = loadLocalDb();
+    const index = db.movies.findIndex((m) => m.id === movieId);
+    if (index === -1) return null;
+
+    const movie = db.movies[index];
+    const alreadyLiked = movie.likedBy.includes(clientId);
+    const alreadyDisliked = movie.dislikedBy.includes(clientId);
+
+    let nextLikedBy = movie.likedBy.filter((id) => id !== clientId);
+    let nextDislikedBy = movie.dislikedBy.filter((id) => id !== clientId);
+
+    if (choice === 'like' && !alreadyLiked) {
+      nextLikedBy = [...nextLikedBy, clientId];
+    } else if (choice === 'dislike' && !alreadyDisliked) {
+      nextDislikedBy = [...nextDislikedBy, clientId];
+    }
+
+    const updated: MovieRecord = {
+      ...movie,
+      likedBy: nextLikedBy,
+      dislikedBy: nextDislikedBy,
+    };
+    db.movies[index] = updated;
+    saveLocalDb(db);
+    return updated;
+  }
+
+  const numericId = Number(movieId);
+  if (!Number.isInteger(numericId) || numericId <= 0) return null;
+
+  const pool = await getSqlPool();
+  const movieRes = await pool
+    .request()
+    .input('Id', sql.Int, numericId)
+    .query<SqlMovieRow>(`SELECT * FROM dbo.Filmes WHERE Id = @Id`);
+
+  const targetMovie = movieRes.recordset[0];
+  if (!targetMovie) return null;
+
+  const desiredLike = choice === 'like';
+  const existingEvalRes = await pool
+    .request()
+    .input('FilmeId', sql.Int, numericId)
+    .input('Usuario', sql.NVarChar(64), clientId)
+    .query<{ Gostou: boolean }>(`
+      SELECT Gostou
+      FROM dbo.AvaliacoesFilmes
+      WHERE FilmeId = @FilmeId AND IdentificadorUsuario = @Usuario
+    `);
+
+  const existing = existingEvalRes.recordset[0];
+  if (existing && Boolean(existing.Gostou) === desiredLike) {
+    await pool
+      .request()
+      .input('FilmeId', sql.Int, numericId)
+      .input('Usuario', sql.NVarChar(64), clientId)
+      .query(`
+        DELETE FROM dbo.AvaliacoesFilmes
+        WHERE FilmeId = @FilmeId AND IdentificadorUsuario = @Usuario
+      `);
+  } else if (existing) {
+    await pool
+      .request()
+      .input('FilmeId', sql.Int, numericId)
+      .input('Usuario', sql.NVarChar(64), clientId)
+      .input('Gostou', sql.Bit, desiredLike ? 1 : 0)
+      .query(`
+        UPDATE dbo.AvaliacoesFilmes
+        SET Gostou = @Gostou, AtualizadoEm = SYSUTCDATETIME()
+        WHERE FilmeId = @FilmeId AND IdentificadorUsuario = @Usuario
+      `);
+  } else {
+    await pool
+      .request()
+      .input('FilmeId', sql.Int, numericId)
+      .input('Usuario', sql.NVarChar(64), clientId)
+      .input('Gostou', sql.Bit, desiredLike ? 1 : 0)
+      .query(`
+        INSERT INTO dbo.AvaliacoesFilmes (FilmeId, IdentificadorUsuario, Gostou)
+        VALUES (@FilmeId, @Usuario, @Gostou)
+      `);
+  }
+
+  const evalsRes = await pool
+    .request()
+    .input('FilmeId', sql.Int, numericId)
+    .query<SqlEvalRow>(`
+      SELECT FilmeId, IdentificadorUsuario, Gostou
+      FROM dbo.AvaliacoesFilmes
+      WHERE FilmeId = @FilmeId
+    `);
+
+  return mapSqlMovies([targetMovie], evalsRes.recordset)[0];
+}
+
+export async function listChatMessages(): Promise<ChatMessageRecord[]> {
+  if (!isSqlServerConfigured()) {
+    return loadLocalDb().messages;
+  }
+
+  const pool = await getSqlPool();
+  const res = await pool.request().query<SqlChatRow>(`
+    SELECT TOP 100 Id, Autor, Texto, FilmeAnexadoId, CriadoEm
+    FROM dbo.MensagensChat
+    ORDER BY CriadoEm ASC, Id ASC
+  `);
+
+  return res.recordset.map((row) => ({
+    id: String(row.Id),
+    author: row.Autor,
+    text: row.Texto,
+    attachedMovieId: row.FilmeAnexadoId ? String(row.FilmeAnexadoId) : undefined,
+    createdAt: new Date(row.CriadoEm).getTime(),
+  }));
+}
+
+export async function createChatMessage(input: {
+  clientMsgId?: string;
+  author: string;
+  text: string;
+  attachedMovieId?: string;
+}): Promise<ChatMessageRecord> {
+  if (!isSqlServerConfigured()) {
+    const db = loadLocalDb();
+    if (input.clientMsgId) {
+      const existing = db.messages.find((m) => m.id === input.clientMsgId);
+      if (existing) return existing;
+    }
+
+    const validMovieId =
+      input.attachedMovieId && db.movies.some((m) => m.id === input.attachedMovieId)
+        ? input.attachedMovieId
+        : undefined;
+
+    const newMsg: ChatMessageRecord = {
+      id: input.clientMsgId || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      author: input.author,
+      text: input.text,
+      attachedMovieId: validMovieId,
+      createdAt: Date.now(),
+    };
+
+    db.messages = [...db.messages, newMsg].slice(-150);
+    saveLocalDb(db);
+    return newMsg;
+  }
+
+  const pool = await getSqlPool();
+  let attachedInt: number | null = null;
+  if (input.attachedMovieId) {
+    const parsedId = Number(input.attachedMovieId);
+    if (Number.isInteger(parsedId) && parsedId > 0) {
+      const checkMovie = await pool
+        .request()
+        .input('Id', sql.Int, parsedId)
+        .query<{ Id: number }>(`SELECT Id FROM dbo.Filmes WHERE Id = @Id`);
+      if (checkMovie.recordset[0]) {
+        attachedInt = parsedId;
+      }
+    }
+  }
+
+  const insertRes = await pool
+    .request()
+    .input('Autor', sql.NVarChar(40), input.author)
+    .input('Texto', sql.NVarChar(400), input.text)
+    .input('FilmeAnexadoId', sql.Int, attachedInt)
+    .query<SqlChatRow>(`
+      INSERT INTO dbo.MensagensChat (Autor, Texto, FilmeAnexadoId)
+      OUTPUT INSERTED.*
+      VALUES (@Autor, @Texto, @FilmeAnexadoId)
+    `);
+
+  const created = insertRes.recordset[0];
+  return {
+    id: String(created.Id),
+    author: created.Autor,
+    text: created.Texto,
+    attachedMovieId: created.FilmeAnexadoId ? String(created.FilmeAnexadoId) : undefined,
+    createdAt: new Date(created.CriadoEm).getTime(),
+  };
+}
