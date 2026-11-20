@@ -234,13 +234,25 @@ export default function App() {
     setActiveView('chat');
   };
 
+  const handleSelectView = useCallback((view: MobileView) => {
+    setActiveView(view);
+    if (view === 'chat' && typeof window !== 'undefined' && window.innerWidth >= 1024) {
+      window.requestAnimationFrame(() => {
+        document.getElementById('comunidade-chat')?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'nearest',
+        });
+      });
+    }
+  }, []);
+
   const genreFilters: GenreFilter[] = ['Todos', ...GENRES];
 
   return (
     <div className="flex min-h-screen flex-col bg-[#F8F9FB] text-[#111827]">
       <Header
         activeView={activeView}
-        onSelectView={setActiveView}
+        onSelectView={handleSelectView}
         watchlistCount={prefs.watchlistIds.length}
         chatMessagesCount={messages.length}
         onOpenRecommendModal={() => setIsRecommendOpen(true)}

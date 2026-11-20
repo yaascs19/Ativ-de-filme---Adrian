@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
-import { Film, Paperclip, Send, UserCheck, X } from 'lucide-react';
+import { Film, MessageCircle, Paperclip, Send, UserCheck, X } from 'lucide-react';
 import { ChatMessage, MovieItem } from '../types/cinema';
 
 interface CommunityChatProps {
@@ -84,20 +84,26 @@ export function CommunityChat({
 
   return (
     <aside
+      id="comunidade-chat"
       aria-label="Chat de indicações da comunidade"
       className="flex h-[580px] lg:h-[680px] flex-col overflow-hidden rounded-2xl border border-[#E2E8F0] bg-white"
     >
       {/* Cabeçalho do chat */}
       <div className="flex items-center justify-between gap-3 border-b border-[#E2E8F0] px-5 py-4">
-        <div>
-          <h2 className="font-display text-base font-bold text-[#111827]">
-            Chat de Indicações
-          </h2>
-          <p className="mt-0.5 text-xs text-[#64748B] tabular-nums">
-            {isConnected
-              ? `Conectado · ${messages.length} mensagens`
-              : 'Sincronizando mensagens...'}
-          </p>
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#FFF1F2] text-[#E11D48]">
+            <MessageCircle className="h-4.5 w-4.5" aria-hidden="true" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="font-display text-base font-bold text-[#111827] truncate">
+              Chat da Comunidade
+            </h2>
+            <p className="mt-0.5 text-xs text-[#64748B] tabular-nums truncate">
+              {isConnected
+                ? `Conectado · ${messages.length} mensagens`
+                : 'Sincronizando mensagens...'}
+            </p>
+          </div>
         </div>
 
         {!editingName && userName && (

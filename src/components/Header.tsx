@@ -1,4 +1,4 @@
-import { Plus } from 'lucide-react';
+import { Bookmark, Film, MessageCircle, Plus } from 'lucide-react';
 
 export type MobileView = 'catalogo' | 'lista' | 'chat';
 
@@ -17,10 +17,14 @@ export function Header({
   chatMessagesCount,
   onOpenRecommendModal,
 }: HeaderProps) {
-  const navItems: Array<{ id: MobileView; label: string; hideOnDesktop?: boolean }> = [
-    { id: 'catalogo', label: 'Catálogo' },
-    { id: 'lista', label: `Minha Lista (${watchlistCount})` },
-    { id: 'chat', label: `Chat (${chatMessagesCount})`, hideOnDesktop: true },
+  const navItems: Array<{
+    id: MobileView;
+    label: string;
+    icon: typeof Film;
+  }> = [
+    { id: 'catalogo', label: 'Catálogo', icon: Film },
+    { id: 'lista', label: `Minha Lista (${watchlistCount})`, icon: Bookmark },
+    { id: 'chat', label: `Comunidade (${chatMessagesCount})`, icon: MessageCircle },
   ];
 
   return (
@@ -36,32 +40,32 @@ export function Header({
         </button>
 
         {/* Zona 2: Links de navegação em linha única */}
-        <nav aria-label="Navegação principal" className="hidden md:flex items-center gap-7">
-          {navItems
-            .filter((item) => !item.hideOnDesktop)
-            .map((item) => {
-              const isActive = activeView === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => onSelectView(item.id)}
-                  className={`relative py-1 text-sm font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer tabular-nums focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#E11D48] rounded ${
-                    isActive
-                      ? 'text-[#E11D48] font-semibold'
-                      : 'text-[#475569] hover:text-[#111827]'
-                  }`}
-                >
-                  {item.label}
-                  {isActive && (
-                    <span
-                      aria-hidden="true"
-                      className="absolute inset-x-0 -bottom-[15px] h-0.5 bg-[#E11D48]"
-                    />
-                  )}
-                </button>
-              );
-            })}
+        <nav aria-label="Navegação principal" className="hidden lg:flex items-center gap-7">
+          {navItems.map((item) => {
+            const isActive = activeView === item.id;
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onSelectView(item.id)}
+                className={`relative inline-flex items-center gap-1.5 py-1 text-sm font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer tabular-nums focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#E11D48] rounded ${
+                  isActive
+                    ? 'text-[#E11D48] font-semibold'
+                    : 'text-[#475569] hover:text-[#111827]'
+                }`}
+              >
+                <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>{item.label}</span>
+                {isActive && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute inset-x-0 -bottom-[15px] h-0.5 bg-[#E11D48]"
+                  />
+                )}
+              </button>
+            );
+          })}
         </nav>
 
         {/* Zona 3: Ação principal única */}
@@ -77,25 +81,27 @@ export function Header({
         </div>
       </div>
 
-      {/* Navegação móvel compacta */}
+      {/* Navegação móvel e tablet compacta */}
       <nav
         aria-label="Navegação móvel"
-        className="flex md:hidden items-center gap-1 overflow-x-auto border-t border-[#E2E8F0] bg-[#F8FAFC] px-4 py-1.5"
+        className="flex lg:hidden items-center gap-1 overflow-x-auto border-t border-[#E2E8F0] bg-[#F8FAFC] px-4 py-1.5"
       >
         {navItems.map((item) => {
           const isActive = activeView === item.id;
+          const Icon = item.icon;
           return (
             <button
               key={item.id}
               type="button"
               onClick={() => onSelectView(item.id)}
-              className={`min-h-[38px] rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 tabular-nums cursor-pointer ${
+              className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 tabular-nums cursor-pointer ${
                 isActive
                   ? 'bg-white text-[#E11D48] font-semibold shadow-xs border border-[#E2E8F0]'
                   : 'text-[#475569] hover:text-[#111827]'
               }`}
             >
-              {item.label}
+              <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span>{item.label}</span>
             </button>
           );
         })}
