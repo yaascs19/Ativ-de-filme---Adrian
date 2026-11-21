@@ -1,6 +1,7 @@
 import { Bookmark, Film, LogIn, MessageCircle, Plus, User } from 'lucide-react';
 import { AuthUser } from '../types/cinema';
 import { BrandMark } from './BrandMark';
+import { PWAInstallButton } from './PWAInstallButton';
 
 export type MobileView = 'catalogo' | 'lista' | 'chat';
 
@@ -97,8 +98,9 @@ export function Header({
           </button>
         </nav>
 
-        {/* Zona 3: Ação principal única */}
-        <div className="flex items-center shrink-0">
+        {/* Zona 3: Ação principal + botão condicional de instalação PWA */}
+        <div className="flex items-center gap-2 shrink-0">
+          <PWAInstallButton />
           <button
             type="button"
             onClick={onOpenRecommendModal}

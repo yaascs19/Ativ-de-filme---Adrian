@@ -3,7 +3,7 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
-      "source": "/((?!api/|assets/|favicon).*)",
+      "source": "/((?!api/|assets/|favicon|manifest\\.webmanifest|sw\\.js|registerSW\\.js|workbox-|pwa-|apple-touch-icon).*)",
       "destination": "/index.html"
     }
   ]

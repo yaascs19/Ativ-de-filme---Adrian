@@ -7,6 +7,7 @@ import { Header, MobileView } from './components/Header';
 import { MovieCard } from './components/MovieCard';
 import { MovieDetailModal } from './components/MovieDetailModal';
 import { MoviePickerModal } from './components/MoviePickerModal';
+import { OfflineIndicator } from './components/OfflineIndicator';
 import { RecommendMovieModal } from './components/RecommendMovieModal';
 import { THEME_PALETTES } from './data/palettes';
 import { GENRES } from './data/posters';
@@ -26,7 +27,7 @@ import {
   savePreferencesToStorage,
 } from './utils/watchlistStorage';
 
-type SortOption = 'recentes' | 'votos' | 'nota';
+type SortOption = 'recentes' | 'lancamento' | 'votos' | 'nota';
 
 const MOVIES_PAGE_SIZE = 6;
 
@@ -263,6 +264,11 @@ export default function App() {
     });
 
     return [...filtered].sort((a, b) => {
+      if (sortBy === 'lancamento') {
+        if (b.year !== a.year) return b.year - a.year;
+        if (b.rating !== a.rating) return b.rating - a.rating;
+        return b.createdAt - a.createdAt;
+      }
       if (sortBy === 'votos') {
         return (
           b.likedBy.length -
@@ -1016,6 +1022,7 @@ export default function App() {
                   className="min-h-[42px] rounded-xl border border-[var(--cr-border)] bg-[var(--cr-surface)] px-3.5 text-sm font-medium text-[var(--cr-ink-secondary)] shadow-2xs focus:border-[var(--cr-accent)] focus:outline-none cursor-pointer"
                 >
                   <option value="recentes">Mais recentes</option>
+                  <option value="lancamento">Ano de lançamento</option>
                   <option value="votos">Mais recomendados</option>
                   <option value="nota">Maior nota</option>
                 </select>
@@ -1278,6 +1285,8 @@ export default function App() {
         onSelectMovie={(m) => setSelectedMovieId(m.id)}
         onToggleWatchlist={handleToggleWatchlist}
       />
+
+      <OfflineIndicator />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { Check, Eye, EyeOff, LogIn, LogOut, Pencil, UserCheck, UserPlus, X } from 'lucide-react';
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import { AuthUser, ThemePaletteId, UserActivity } from '../types/cinema';
 
 type AuthTab = 'login' | 'register';
@@ -50,6 +51,8 @@ export function AuthModal({
 
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+
+  useBodyScrollLock(isOpen);
 
   useEffect(() => {
     if (isOpen) {

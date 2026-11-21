@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Bookmark, Clock, Film, Shuffle, Sparkles, Star, X } from 'lucide-react';
 import { GENRES } from '../data/posters';
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import { MovieGenre, MovieItem } from '../types/cinema';
 
 interface MoviePickerModalProps {
@@ -106,6 +107,8 @@ export function MoviePickerModal({
   const [excludeSaved, setExcludeSaved] = useState<boolean>(true);
   const [results, setResults] = useState<MovieItem[]>([]);
   const [usedFallback, setUsedFallback] = useState<boolean>(false);
+
+  useBodyScrollLock(isOpen);
 
   const runPicker = useCallback(
     (

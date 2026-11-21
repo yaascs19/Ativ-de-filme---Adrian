@@ -11,6 +11,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import { AuthUser, EvaluationChoice, MovieItem } from '../types/cinema';
 
 interface MovieDetailModalProps {
@@ -65,6 +66,8 @@ export function MovieDetailModal({
   const [commentText, setCommentText] = useState('');
   const [sendingComment, setSendingComment] = useState(false);
   const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
+
+  useBodyScrollLock(Boolean(movie));
 
   useEffect(() => {
     setImageError(false);

@@ -1,6 +1,7 @@
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react';
 import { ExternalLink, Image as ImageIcon, Trash2, Upload, UserCheck, X } from 'lucide-react';
 import { GENRES, getDefaultPosterForGenre, POSTER_PRESETS } from '../data/posters';
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
 import { AuthUser, MovieGenre, MovieItem } from '../types/cinema';
 
 interface RecommendMovieModalProps {
@@ -45,6 +46,8 @@ export function RecommendMovieModal({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const isEditing = Boolean(editingMovie);
+
+  useBodyScrollLock(Boolean(isOpen && authUser));
 
   useEffect(() => {
     if (!isOpen) return;
