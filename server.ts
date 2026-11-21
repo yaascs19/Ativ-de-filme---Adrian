@@ -9,7 +9,7 @@ import {
   handleEvaluateMovieRequest,
   handleHealthRequest,
   handleMoviesRequest,
-} from './api/_lib/handlers';
+} from './api/_lib/handlers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

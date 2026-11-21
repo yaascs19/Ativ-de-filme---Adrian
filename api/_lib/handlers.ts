@@ -10,7 +10,7 @@ import {
   sanitizePosterUrl,
   sanitizeText,
   VALID_GENRES,
-} from './db';
+} from './db.js';
 
 function formatDbError(err: unknown): { code?: string; message: string } {
   if (err && typeof err === 'object') {
