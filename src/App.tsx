@@ -249,10 +249,7 @@ export default function App() {
         );
       }
       if (sortBy === 'nota') {
-        return (
-          (activePersonalRatings[b.id] ?? b.rating) -
-          (activePersonalRatings[a.id] ?? a.rating)
-        );
+        return b.rating - a.rating;
       }
       return b.createdAt - a.createdAt;
     });
@@ -260,7 +257,6 @@ export default function App() {
     movies,
     activeView,
     activeWatchlistIds,
-    activePersonalRatings,
     prefs.activeGenre,
     searchQuery,
     sortBy,
@@ -268,12 +264,9 @@ export default function App() {
 
   const averageRating = useMemo(() => {
     if (movies.length === 0) return '0.0';
-    const sum = movies.reduce(
-      (acc, item) => acc + (activePersonalRatings[item.id] ?? item.rating),
-      0
-    );
+    const sum = movies.reduce((acc, item) => acc + item.rating, 0);
     return (sum / movies.length).toFixed(1);
-  }, [movies, activePersonalRatings]);
+  }, [movies]);
 
   const featuredMovie = useMemo(() => {
     if (movies.length === 0) return null;
@@ -281,12 +274,9 @@ export default function App() {
       const scoreDiff =
         b.likedBy.length - b.dislikedBy.length - (a.likedBy.length - a.dislikedBy.length);
       if (scoreDiff !== 0) return scoreDiff;
-      return (
-        (activePersonalRatings[b.id] ?? b.rating) -
-        (activePersonalRatings[a.id] ?? a.rating)
-      );
+      return b.rating - a.rating;
     })[0];
-  }, [movies, activePersonalRatings]);
+  }, [movies]);
 
   const selectedMovie = useMemo(
     () => movies.find((m) => m.id === selectedMovieId) ?? null,
@@ -369,9 +359,16 @@ export default function App() {
           return;
         }
         if (res.ok) {
-          const data = (await res.json()) as { personalRatings?: Record<string, number> };
+          const data = (await res.json()) as {
+            personalRatings?: Record<string, number>;
+            movie?: MovieItem;
+          };
           if (data.personalRatings) {
             setPrefs((prev) => ({ ...prev, personalRatings: data.personalRatings! }));
+          }
+          if (data.movie) {
+            const updated = data.movie;
+            setMovies((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
           }
         }
       } catch {
@@ -600,10 +597,7 @@ export default function App() {
                 <div className="flex items-center gap-4 text-xs text-slate-300 tabular-nums">
                   <span className="inline-flex items-center gap-1.5 font-mono text-sm font-semibold text-white">
                     <Star className="h-4 w-4 fill-[#F59E0B] text-[#F59E0B]" aria-hidden="true" />
-                    <span>
-                      {(activePersonalRatings[featuredMovie.id] ?? featuredMovie.rating).toFixed(1)}
-                      /5
-                    </span>
+                    <span>{featuredMovie.rating.toFixed(1)}/5</span>
                   </span>
                   <span aria-hidden="true" className="text-white/25">
                     ·

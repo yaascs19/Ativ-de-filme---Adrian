@@ -346,16 +346,16 @@ export async function handleUserActivityRequest(req: ApiRequest, res: ApiRespons
         res.status(400).json({ error: 'Informe uma nota entre 1 e 5.' });
         return;
       }
-      const personalRatings = await saveUserMovieRating(
+      const result = await saveUserMovieRating(
         auth.session.user.userKey,
         movieId,
         rating
       );
-      if (!personalRatings) {
+      if (!result) {
         res.status(404).json({ error: 'Filme não encontrado.' });
         return;
       }
-      res.status(200).json({ personalRatings });
+      res.status(200).json(result);
       return;
     }
 

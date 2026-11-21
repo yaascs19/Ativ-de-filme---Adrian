@@ -34,6 +34,7 @@ export interface MovieRecord {
   recommendationNote: string;
   posterUrl: string;
   rating: number;
+  authorRating?: number;
   likedBy: string[];
   dislikedBy: string[];
   createdAt: number;
@@ -315,7 +316,17 @@ async function ensureAuthSchema(pool: sql.ConnectionPool): Promise<void> {
         CONSTRAINT UQ_Notas_Usuario_Filme UNIQUE (IdentificadorUsuario, FilmeId)
       );
     END;
+
+    IF COL_LENGTH('dbo.Filmes', 'NotaAutor') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Filmes ADD NotaAutor DECIMAL(2,1) NULL;
+    END;
   `);
+
+  await pool.request().query(`
+    UPDATE dbo.Filmes SET NotaAutor = NotaMedia WHERE NotaAutor IS NULL;
+  `);
+
   authSchemaEnsured = true;
 }
 
@@ -592,6 +603,7 @@ interface SqlMovieRow {
   MotivoIndicacao: string;
   PosterUrl: string;
   NotaMedia: number;
+  NotaAutor?: number | null;
   CriadoEm: Date;
 }
 
@@ -1066,18 +1078,38 @@ export async function saveUserMovieRating(
   userKey: string,
   movieId: string,
   rating: number
-): Promise<Record<string, number> | null> {
+): Promise<{ personalRatings: Record<string, number>; movie: MovieRecord } | null> {
   const safeRating = Math.round(rating);
   if (!Number.isInteger(safeRating) || safeRating < 1 || safeRating > 5) return null;
 
   if (!isSqlServerConfigured()) {
     const db = loadLocalDb();
-    if (!db.movies.some((m) => m.id === movieId)) return null;
+    const movieIndex = db.movies.findIndex((m) => m.id === movieId);
+    if (movieIndex === -1) return null;
+
     const current = db.personalRatings[userKey] ?? {};
-    const next = { ...current, [movieId]: safeRating };
-    db.personalRatings[userKey] = next;
+    const nextRatings = { ...current, [movieId]: safeRating };
+    db.personalRatings[userKey] = nextRatings;
+
+    const targetMovie = db.movies[movieIndex];
+    const baseAuthorRating = targetMovie.authorRating ?? targetMovie.rating;
+    const allUserRatings = Object.values(db.personalRatings)
+      .map((map) => map[movieId])
+      .filter((val): val is number => typeof val === 'number' && val >= 1 && val <= 5);
+
+    const totalSum =
+      baseAuthorRating + allUserRatings.reduce((acc, item) => acc + item, 0);
+    const updatedAverage = Math.round((totalSum / (1 + allUserRatings.length)) * 10) / 10;
+
+    const updatedMovie: MovieRecord = {
+      ...targetMovie,
+      authorRating: baseAuthorRating,
+      rating: updatedAverage,
+    };
+    db.movies[movieIndex] = updatedMovie;
+
     saveLocalDb(db);
-    return next;
+    return { personalRatings: nextRatings, movie: updatedMovie };
   }
 
   const numericMovieId = Number(movieId);
@@ -1086,11 +1118,12 @@ export async function saveUserMovieRating(
   const pool = await getSqlPool();
   await ensureAuthSchema(pool);
 
-  const movieCheck = await pool
+  const movieRes = await pool
     .request()
     .input('FilmeId', sql.Int, numericMovieId)
-    .query<{ Id: number }>(`SELECT Id FROM dbo.Filmes WHERE Id = @FilmeId`);
-  if (!movieCheck.recordset[0]) return null;
+    .query<SqlMovieRow>(`SELECT * FROM dbo.Filmes WHERE Id = @FilmeId`);
+  const targetMovie = movieRes.recordset[0];
+  if (!targetMovie) return null;
 
   const existing = await pool
     .request()
@@ -1124,19 +1157,60 @@ export async function saveUserMovieRating(
       `);
   }
 
-  const allRes = await pool
+  const [movieNotesRes, userNotesRes, evalsRes] = await Promise.all([
+    pool
+      .request()
+      .input('FilmeId', sql.Int, numericMovieId)
+      .query<{ Nota: number }>(`
+        SELECT Nota FROM dbo.NotasPessoais WHERE FilmeId = @FilmeId
+      `),
+    pool
+      .request()
+      .input('Usuario', sql.NVarChar(64), userKey)
+      .query<{ FilmeId: number; Nota: number }>(`
+        SELECT FilmeId, Nota FROM dbo.NotasPessoais
+        WHERE IdentificadorUsuario = @Usuario
+      `),
+    pool
+      .request()
+      .input('FilmeId', sql.Int, numericMovieId)
+      .query<SqlEvalRow>(`
+        SELECT FilmeId, IdentificadorUsuario, Gostou
+        FROM dbo.AvaliacoesFilmes
+        WHERE FilmeId = @FilmeId
+      `),
+  ]);
+
+  const baseAuthorRating = Number(targetMovie.NotaAutor ?? targetMovie.NotaMedia);
+  const allUserNotes = movieNotesRes.recordset.map((r) => Number(r.Nota));
+  const totalSum =
+    baseAuthorRating + allUserNotes.reduce((acc, item) => acc + item, 0);
+  const updatedAverage = Math.round((totalSum / (1 + allUserNotes.length)) * 10) / 10;
+
+  const updatedMovieRes = await pool
     .request()
-    .input('Usuario', sql.NVarChar(64), userKey)
-    .query<{ FilmeId: number; Nota: number }>(`
-      SELECT FilmeId, Nota FROM dbo.NotasPessoais
-      WHERE IdentificadorUsuario = @Usuario
+    .input('FilmeId', sql.Int, numericMovieId)
+    .input('NotaMedia', sql.Decimal(2, 1), updatedAverage)
+    .input('NotaAutor', sql.Decimal(2, 1), baseAuthorRating)
+    .query<SqlMovieRow>(`
+      UPDATE dbo.Filmes
+      SET NotaMedia = @NotaMedia,
+          NotaAutor = COALESCE(NotaAutor, @NotaAutor)
+      OUTPUT INSERTED.*
+      WHERE Id = @FilmeId
     `);
 
   const nextRatings: Record<string, number> = {};
-  for (const r of allRes.recordset) {
+  for (const r of userNotesRes.recordset) {
     nextRatings[String(r.FilmeId)] = Number(r.Nota);
   }
-  return nextRatings;
+
+  const updatedMovie = mapSqlMovies(
+    [updatedMovieRes.recordset[0] ?? targetMovie],
+    evalsRes.recordset
+  )[0];
+
+  return { personalRatings: nextRatings, movie: updatedMovie };
 }
 
 export async function updateUserPalette(
@@ -1255,6 +1329,7 @@ export async function createMovie(input: CreateMovieInput): Promise<MovieRecord>
       recommendationNote: input.recommendationNote,
       posterUrl: input.posterUrl,
       rating: input.rating,
+      authorRating: input.rating,
       likedBy: [input.clientId],
       dislikedBy: [],
       createdAt: Date.now(),
@@ -1265,6 +1340,7 @@ export async function createMovie(input: CreateMovieInput): Promise<MovieRecord>
   }
 
   const pool = await getSqlPool();
+  await ensureAuthSchema(pool);
   if (input.posterUrl.startsWith('data:image/')) {
     await ensurePosterColumnMax(pool);
   }
@@ -1284,12 +1360,12 @@ export async function createMovie(input: CreateMovieInput): Promise<MovieRecord>
     .query<SqlMovieRow>(`
       INSERT INTO dbo.Filmes (
         Titulo, Diretor, AnoLancamento, DuracaoMinutos, Genero,
-        Sinopse, IndicadoPor, MotivoIndicacao, PosterUrl, NotaMedia
+        Sinopse, IndicadoPor, MotivoIndicacao, PosterUrl, NotaMedia, NotaAutor
       )
       OUTPUT INSERTED.*
       VALUES (
         @Titulo, @Diretor, @AnoLancamento, @DuracaoMinutos, @Genero,
-        @Sinopse, @IndicadoPor, @MotivoIndicacao, @PosterUrl, @NotaMedia
+        @Sinopse, @IndicadoPor, @MotivoIndicacao, @PosterUrl, @NotaMedia, @NotaMedia
       )
     `);
 

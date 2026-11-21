@@ -177,7 +177,7 @@ export function MovieDetailModal({
                   </span>
                   <span className="font-mono text-xs text-[var(--cr-ink-muted)] tabular-nums">
                     {personalRating !== undefined
-                      ? `Sua nota: ${personalRating.toFixed(1)}/5 · Catálogo: ${movie.rating.toFixed(1)}/5`
+                      ? `Sua nota: ${personalRating.toFixed(1)}/5 · Média geral: ${movie.rating.toFixed(1)}/5`
                       : `Média: ${movie.rating.toFixed(1)}/5`}
                   </span>
                 </div>
