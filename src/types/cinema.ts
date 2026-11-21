@@ -11,6 +11,8 @@ export type NavSection = 'catalogo' | 'lista' | 'sobre';
 
 export type EvaluationChoice = 'like' | 'dislike';
 
+export type ThemePaletteId = 'cinabrio' | 'cobalto' | 'esmeralda' | 'noturno';
+
 export interface MovieItem {
   id: string;
   title: string;
@@ -36,10 +38,25 @@ export interface ChatMessage {
   createdAt: number;
 }
 
+export interface AuthUser {
+  id: string;
+  userKey: string;
+  name: string;
+  email: string;
+  createdAt: number;
+}
+
+export interface UserActivity {
+  watchlistIds: string[];
+  personalRatings: Record<string, number>;
+  palette: ThemePaletteId;
+}
+
 export interface PersonalPreferences {
   clientId: string;
   userName: string;
   watchlistIds: string[];
   personalRatings: Record<string, number>;
   activeGenre: GenreFilter;
+  palette: ThemePaletteId;
 }

@@ -1,20 +1,20 @@
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react';
-import { Image as ImageIcon, Trash2, Upload, X } from 'lucide-react';
+import { Image as ImageIcon, Trash2, Upload, UserCheck, X } from 'lucide-react';
 import { GENRES, getDefaultPosterForGenre, POSTER_PRESETS } from '../data/posters';
-import { MovieGenre, MovieItem } from '../types/cinema';
+import { AuthUser, MovieGenre, MovieItem } from '../types/cinema';
 
 interface RecommendMovieModalProps {
   isOpen: boolean;
-  defaultAuthorName: string;
-  clientId: string;
+  authUser: AuthUser | null;
+  authHeaders: Record<string, string>;
   onClose: () => void;
-  onMovieCreated: (movie: MovieItem, shareInChat: boolean, authorName: string) => void;
+  onMovieCreated: (movie: MovieItem, shareInChat: boolean) => void;
 }
 
 export function RecommendMovieModal({
   isOpen,
-  defaultAuthorName,
-  clientId,
+  authUser,
+  authHeaders,
   onClose,
   onMovieCreated,
 }: RecommendMovieModalProps) {
@@ -25,7 +25,6 @@ export function RecommendMovieModal({
   const [genre, setGenre] = useState<MovieGenre>('Romance');
   const [rating, setRating] = useState('4.5');
   const [synopsis, setSynopsis] = useState('');
-  const [recommendedBy, setRecommendedBy] = useState(defaultAuthorName);
   const [recommendationNote, setRecommendationNote] = useState('');
   const [uploadedPosterDataUrl, setUploadedPosterDataUrl] = useState('');
   const [uploadedFileName, setUploadedFileName] = useState('');
@@ -39,12 +38,6 @@ export function RecommendMovieModal({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    if (isOpen && defaultAuthorName && !recommendedBy) {
-      setRecommendedBy(defaultAuthorName);
-    }
-  }, [isOpen, defaultAuthorName, recommendedBy]);
-
-  useEffect(() => {
     if (!isOpen) return;
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -53,7 +46,7 @@ export function RecommendMovieModal({
     return () => window.removeEventListener('keydown', handleEsc);
   }, [isOpen, onClose]);
 
-  if (!isOpen) return null;
+  if (!isOpen || !authUser) return null;
 
   const effectivePosterUrl = uploadedPosterDataUrl || presetPosterUrl;
 
@@ -141,16 +134,17 @@ export function RecommendMovieModal({
       setErrorMsg('Escreva uma sinopse com pelo menos 10 caracteres.');
       return;
     }
-    if (recommendedBy.trim().length < 2) {
-      setErrorMsg('Informe seu nome para assinar a indicação.');
-      return;
-    }
 
     setSubmitting(true);
     try {
       const response = await fetch('/api/movies', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'CineRoda',
+          ...authHeaders,
+        },
         body: JSON.stringify({
           title: title.trim(),
           director: director.trim(),
@@ -159,10 +153,8 @@ export function RecommendMovieModal({
           genre,
           rating: Number(rating),
           synopsis: synopsis.trim(),
-          recommendedBy: recommendedBy.trim(),
           recommendationNote: recommendationNote.trim(),
           posterUrl: effectivePosterUrl,
-          clientId,
         }),
       });
 
@@ -172,7 +164,7 @@ export function RecommendMovieModal({
         return;
       }
 
-      onMovieCreated(data.movie, shareInChat, recommendedBy.trim());
+      onMovieCreated(data.movie, shareInChat);
       setTitle('');
       setDirector('');
       setSynopsis('');
@@ -191,22 +183,22 @@ export function RecommendMovieModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="recommend-modal-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F172A]/70 p-4 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[#090D16]/75 p-4 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
-        className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-[#E2E8F0] bg-white p-6 shadow-xl sm:p-7"
+        className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-[var(--cr-border)] bg-[var(--cr-surface)] p-6 shadow-2xl sm:p-7"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-[#E2E8F0] pb-4">
+        <div className="flex items-start justify-between gap-4 border-b border-[var(--cr-border)] pb-4">
           <div>
             <h2
               id="recommend-modal-title"
-              className="font-display text-xl font-bold text-[#111827]"
+              className="font-display text-xl font-bold text-[var(--cr-ink)]"
             >
               Indicar Novo Filme para o Catálogo
             </h2>
-            <p className="mt-1 text-xs text-[#64748B]">
+            <p className="mt-1 text-xs text-[var(--cr-ink-muted)]">
               Escolha uma imagem do seu computador ou selecione uma capa pronta abaixo.
             </p>
           </div>
@@ -214,7 +206,7 @@ export function RecommendMovieModal({
             type="button"
             onClick={onClose}
             aria-label="Fechar formulário"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#E2E8F0] text-[#475569] hover:bg-[#F8FAFC] cursor-pointer shrink-0"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--cr-border)] text-[var(--cr-ink-secondary)] hover:bg-[var(--cr-surface-hover)] cursor-pointer shrink-0"
           >
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -224,7 +216,7 @@ export function RecommendMovieModal({
           {errorMsg && (
             <div
               role="alert"
-              className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-xs font-medium text-[#991B1B]"
+              className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-xs font-medium text-[#991B1B] dark:border-rose-800 dark:bg-rose-950/60 dark:text-rose-200"
             >
               {errorMsg}
             </div>
@@ -232,7 +224,10 @@ export function RecommendMovieModal({
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label htmlFor="mov-title" className="block text-xs font-semibold text-[#334155]">
+              <label
+                htmlFor="mov-title"
+                className="block text-xs font-semibold text-[var(--cr-ink-secondary)]"
+              >
                 Título do filme
               </label>
               <input
@@ -243,12 +238,15 @@ export function RecommendMovieModal({
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Ex.: Interestelar"
-                className="mt-1.5 w-full rounded-lg border border-[#CBD5E1] px-3 py-2 text-sm text-[#111827] focus:border-[#E11D48] focus:outline-none"
+                className="mt-1.5 w-full rounded-lg border border-[var(--cr-border-strong)] bg-[var(--cr-surface)] px-3 py-2 text-sm text-[var(--cr-ink)] placeholder:text-[var(--cr-ink-muted)] focus:border-[var(--cr-accent)] focus:outline-none"
               />
             </div>
 
             <div>
-              <label htmlFor="mov-director" className="block text-xs font-semibold text-[#334155]">
+              <label
+                htmlFor="mov-director"
+                className="block text-xs font-semibold text-[var(--cr-ink-secondary)]"
+              >
                 Direção
               </label>
               <input
@@ -259,21 +257,24 @@ export function RecommendMovieModal({
                 value={director}
                 onChange={(e) => setDirector(e.target.value)}
                 placeholder="Ex.: Christopher Nolan"
-                className="mt-1.5 w-full rounded-lg border border-[#CBD5E1] px-3 py-2 text-sm text-[#111827] focus:border-[#E11D48] focus:outline-none"
+                className="mt-1.5 w-full rounded-lg border border-[var(--cr-border-strong)] bg-[var(--cr-surface)] px-3 py-2 text-sm text-[var(--cr-ink)] placeholder:text-[var(--cr-ink-muted)] focus:border-[var(--cr-accent)] focus:outline-none"
               />
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <div className="col-span-2 sm:col-span-2">
-              <label htmlFor="mov-genre" className="block text-xs font-semibold text-[#334155]">
+              <label
+                htmlFor="mov-genre"
+                className="block text-xs font-semibold text-[var(--cr-ink-secondary)]"
+              >
                 Gênero
               </label>
               <select
                 id="mov-genre"
                 value={genre}
                 onChange={(e) => handleGenreChange(e.target.value as MovieGenre)}
-                className="mt-1.5 w-full rounded-lg border border-[#CBD5E1] bg-white px-3 py-2 text-sm text-[#111827] focus:border-[#E11D48] focus:outline-none"
+                className="mt-1.5 w-full rounded-lg border border-[var(--cr-border-strong)] bg-[var(--cr-surface)] px-3 py-2 text-sm text-[var(--cr-ink)] focus:border-[var(--cr-accent)] focus:outline-none"
               >
                 {GENRES.map((g) => (
                   <option key={g} value={g}>
@@ -284,7 +285,10 @@ export function RecommendMovieModal({
             </div>
 
             <div>
-              <label htmlFor="mov-year" className="block text-xs font-semibold text-[#334155]">
+              <label
+                htmlFor="mov-year"
+                className="block text-xs font-semibold text-[var(--cr-ink-secondary)]"
+              >
                 Ano
               </label>
               <input
@@ -295,12 +299,15 @@ export function RecommendMovieModal({
                 required
                 value={year}
                 onChange={(e) => setYear(e.target.value)}
-                className="mt-1.5 w-full rounded-lg border border-[#CBD5E1] px-3 py-2 font-mono text-sm text-[#111827] tabular-nums focus:border-[#E11D48] focus:outline-none"
+                className="mt-1.5 w-full rounded-lg border border-[var(--cr-border-strong)] bg-[var(--cr-surface)] px-3 py-2 font-mono text-sm text-[var(--cr-ink)] tabular-nums focus:border-[var(--cr-accent)] focus:outline-none"
               />
             </div>
 
             <div>
-              <label htmlFor="mov-duration" className="block text-xs font-semibold text-[#334155]">
+              <label
+                htmlFor="mov-duration"
+                className="block text-xs font-semibold text-[var(--cr-ink-secondary)]"
+              >
                 Duração (min)
               </label>
               <input
@@ -311,30 +318,27 @@ export function RecommendMovieModal({
                 required
                 value={durationMinutes}
                 onChange={(e) => setDurationMinutes(e.target.value)}
-                className="mt-1.5 w-full rounded-lg border border-[#CBD5E1] px-3 py-2 font-mono text-sm text-[#111827] tabular-nums focus:border-[#E11D48] focus:outline-none"
+                className="mt-1.5 w-full rounded-lg border border-[var(--cr-border-strong)] bg-[var(--cr-surface)] px-3 py-2 font-mono text-sm text-[var(--cr-ink)] tabular-nums focus:border-[var(--cr-accent)] focus:outline-none"
               />
             </div>
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label htmlFor="mov-author" className="block text-xs font-semibold text-[#334155]">
-                Seu nome
-              </label>
-              <input
-                id="mov-author"
-                type="text"
-                required
-                maxLength={40}
-                value={recommendedBy}
-                onChange={(e) => setRecommendedBy(e.target.value)}
-                placeholder="Como deseja aparecer"
-                className="mt-1.5 w-full rounded-lg border border-[#CBD5E1] px-3 py-2 text-sm text-[#111827] focus:border-[#E11D48] focus:outline-none"
-              />
+              <span className="block text-xs font-semibold text-[var(--cr-ink-secondary)]">
+                Indicado pela conta
+              </span>
+              <div className="mt-1.5 flex min-h-[40px] items-center gap-2 rounded-lg border border-[var(--cr-border)] bg-[var(--cr-surface-alt)] px-3 py-2 text-sm font-medium text-[var(--cr-ink)]">
+                <UserCheck className="h-4 w-4 shrink-0 text-[#059669]" aria-hidden="true" />
+                <span className="truncate">{authUser.name}</span>
+              </div>
             </div>
 
             <div>
-              <label htmlFor="mov-rating" className="block text-xs font-semibold text-[#334155]">
+              <label
+                htmlFor="mov-rating"
+                className="block text-xs font-semibold text-[var(--cr-ink-secondary)]"
+              >
                 Sua nota (1 a 5)
               </label>
               <input
@@ -346,13 +350,16 @@ export function RecommendMovieModal({
                 required
                 value={rating}
                 onChange={(e) => setRating(e.target.value)}
-                className="mt-1.5 w-full rounded-lg border border-[#CBD5E1] px-3 py-2 font-mono text-sm text-[#111827] tabular-nums focus:border-[#E11D48] focus:outline-none"
+                className="mt-1.5 w-full rounded-lg border border-[var(--cr-border-strong)] bg-[var(--cr-surface)] px-3 py-2 font-mono text-sm text-[var(--cr-ink)] tabular-nums focus:border-[var(--cr-accent)] focus:outline-none"
               />
             </div>
           </div>
 
           <div>
-            <label htmlFor="mov-synopsis" className="block text-xs font-semibold text-[#334155]">
+            <label
+              htmlFor="mov-synopsis"
+              className="block text-xs font-semibold text-[var(--cr-ink-secondary)]"
+            >
               Sinopse breve
             </label>
             <textarea
@@ -363,12 +370,15 @@ export function RecommendMovieModal({
               value={synopsis}
               onChange={(e) => setSynopsis(e.target.value)}
               placeholder="Sobre o que é o filme sem spoilers..."
-              className="mt-1.5 w-full rounded-lg border border-[#CBD5E1] px-3 py-2 text-sm text-[#111827] focus:border-[#E11D48] focus:outline-none"
+              className="mt-1.5 w-full rounded-lg border border-[var(--cr-border-strong)] bg-[var(--cr-surface)] px-3 py-2 text-sm text-[var(--cr-ink)] placeholder:text-[var(--cr-ink-muted)] focus:border-[var(--cr-accent)] focus:outline-none"
             />
           </div>
 
           <div>
-            <label htmlFor="mov-note" className="block text-xs font-semibold text-[#334155]">
+            <label
+              htmlFor="mov-note"
+              className="block text-xs font-semibold text-[var(--cr-ink-secondary)]"
+            >
               Por que você indica esse filme?
             </label>
             <input
@@ -378,14 +388,14 @@ export function RecommendMovieModal({
               value={recommendationNote}
               onChange={(e) => setRecommendationNote(e.target.value)}
               placeholder="Ex.: Roteiro muito criativo e ótimo final!"
-              className="mt-1.5 w-full rounded-lg border border-[#CBD5E1] px-3 py-2 text-sm text-[#111827] focus:border-[#E11D48] focus:outline-none"
+              className="mt-1.5 w-full rounded-lg border border-[var(--cr-border-strong)] bg-[var(--cr-surface)] px-3 py-2 text-sm text-[var(--cr-ink)] placeholder:text-[var(--cr-ink-muted)] focus:border-[var(--cr-accent)] focus:outline-none"
             />
           </div>
 
           {/* Seleção de imagem do computador com pré-visualização */}
-          <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-3.5 space-y-3">
+          <div className="rounded-xl border border-[var(--cr-border)] bg-[var(--cr-surface-hover)] p-3.5 space-y-3">
             <div className="flex items-center gap-3.5">
-              <div className="h-20 w-15 shrink-0 overflow-hidden rounded-lg border border-[#CBD5E1] bg-[#0F172A] flex items-center justify-center">
+              <div className="h-20 w-15 shrink-0 overflow-hidden rounded-lg border border-[var(--cr-border-strong)] bg-[#0F172A] flex items-center justify-center">
                 {effectivePosterUrl ? (
                   <img
                     src={effectivePosterUrl}
@@ -398,7 +408,7 @@ export function RecommendMovieModal({
               </div>
 
               <div className="min-w-0 flex-1 space-y-2">
-                <span className="block text-xs font-semibold text-[#334155]">
+                <span className="block text-xs font-semibold text-[var(--cr-ink-secondary)]">
                   Imagem do pôster do filme
                 </span>
 
@@ -416,7 +426,7 @@ export function RecommendMovieModal({
                     type="button"
                     disabled={processingImage}
                     onClick={() => fileInputRef.current?.click()}
-                    className="inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-[#CBD5E1] bg-white px-3.5 py-2 text-xs font-semibold text-[#111827] transition-colors hover:border-[#E11D48] hover:text-[#E11D48] cursor-pointer disabled:opacity-50"
+                    className="inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-[var(--cr-border-strong)] bg-[var(--cr-surface)] px-3.5 py-2 text-xs font-semibold text-[var(--cr-ink)] transition-colors hover:border-[var(--cr-accent)] hover:text-[var(--cr-accent)] cursor-pointer disabled:opacity-50"
                   >
                     <Upload className="h-4 w-4 shrink-0" aria-hidden="true" />
                     <span>
@@ -432,7 +442,7 @@ export function RecommendMovieModal({
                     <button
                       type="button"
                       onClick={handleClearUploadedImage}
-                      className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-[#E2E8F0] bg-white px-3 py-2 text-xs font-medium text-[#64748B] hover:text-[#DC2626] cursor-pointer"
+                      className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-[var(--cr-border)] bg-[var(--cr-surface)] px-3 py-2 text-xs font-medium text-[var(--cr-ink-muted)] hover:text-[#DC2626] cursor-pointer"
                     >
                       <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                       <span>Remover</span>
@@ -441,11 +451,11 @@ export function RecommendMovieModal({
                 </div>
 
                 {uploadedFileName ? (
-                  <p className="truncate text-[11px] font-medium text-[#059669]">
+                  <p className="truncate text-[11px] font-medium text-[#059669] dark:text-emerald-400">
                     Arquivo selecionado: {uploadedFileName}
                   </p>
                 ) : (
-                  <p className="text-[11px] text-[#64748B]">
+                  <p className="text-[11px] text-[var(--cr-ink-muted)]">
                     Aceita JPG, PNG ou WebP direto do seu computador ou celular.
                   </p>
                 )}
@@ -453,7 +463,7 @@ export function RecommendMovieModal({
             </div>
 
             <div>
-              <span className="block text-[11px] font-medium text-[#64748B]">
+              <span className="block text-[11px] font-medium text-[var(--cr-ink-muted)]">
                 Ou escolha uma capa pronta:
               </span>
               <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-6">
@@ -469,8 +479,8 @@ export function RecommendMovieModal({
                       }}
                       className={`overflow-hidden rounded-lg border text-left transition-all cursor-pointer ${
                         selected
-                          ? 'border-[#E11D48] ring-2 ring-[#E11D48]'
-                          : 'border-[#E2E8F0] opacity-75 hover:opacity-100'
+                          ? 'border-[var(--cr-accent)] ring-2 ring-[var(--cr-accent)]'
+                          : 'border-[var(--cr-border)] opacity-75 hover:opacity-100'
                       }`}
                     >
                       <img
@@ -485,28 +495,28 @@ export function RecommendMovieModal({
             </div>
           </div>
 
-          <label className="flex items-center gap-2.5 text-xs font-medium text-[#334155] cursor-pointer">
+          <label className="flex items-center gap-2.5 text-xs font-medium text-[var(--cr-ink-secondary)] cursor-pointer">
             <input
               type="checkbox"
               checked={shareInChat}
               onChange={(e) => setShareInChat(e.target.checked)}
-              className="h-4 w-4 rounded accent-[#E11D48]"
+              className="h-4 w-4 rounded accent-[var(--cr-accent)]"
             />
             <span>Anunciar minha indicação automaticamente no chat da comunidade</span>
           </label>
 
-          <div className="flex items-center justify-end gap-3 border-t border-[#E2E8F0] pt-4">
+          <div className="flex items-center justify-end gap-3 border-t border-[var(--cr-border)] pt-4">
             <button
               type="button"
               onClick={onClose}
-              className="min-h-[42px] rounded-lg border border-[#E2E8F0] bg-white px-4 py-2 text-xs font-semibold text-[#475569] hover:bg-[#F8FAFC] cursor-pointer"
+              className="min-h-[42px] rounded-lg border border-[var(--cr-border)] bg-[var(--cr-surface)] px-4 py-2 text-xs font-semibold text-[var(--cr-ink-secondary)] hover:bg-[var(--cr-surface-hover)] cursor-pointer"
             >
               Cancelar
             </button>
             <button
               type="submit"
               disabled={submitting}
-              className="min-h-[42px] rounded-lg bg-[#E11D48] px-5 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#BE123C] disabled:opacity-50 cursor-pointer"
+              className="min-h-[42px] rounded-lg bg-[var(--cr-accent)] px-5 py-2 text-xs font-semibold text-white transition-colors hover:bg-[var(--cr-accent-hover)] disabled:opacity-50 cursor-pointer"
             >
               {submitting ? 'Salvando...' : 'Publicar Indicação'}
             </button>

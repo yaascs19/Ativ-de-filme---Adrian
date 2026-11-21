@@ -1,4 +1,4 @@
-import { GenreFilter, MovieGenre, PersonalPreferences } from '../types/cinema';
+import { GenreFilter, MovieGenre, PersonalPreferences, ThemePaletteId } from '../types/cinema';
 
 export const PREFS_STORAGE_KEY = 'cineroda_dsa_2026_prefs_v1';
 
@@ -9,6 +9,13 @@ const VALID_GENRES: GenreFilter[] = [
   'Ação',
   'Musical',
   'Comédia',
+];
+
+const VALID_PALETTES: ThemePaletteId[] = [
+  'cinabrio',
+  'cobalto',
+  'esmeralda',
+  'noturno',
 ];
 
 function generateClientId(): string {
@@ -25,6 +32,7 @@ export function createDefaultPreferences(): PersonalPreferences {
     watchlistIds: [],
     personalRatings: {},
     activeGenre: 'Todos',
+    palette: 'cinabrio',
   };
 }
 
@@ -40,6 +48,10 @@ export function loadPreferencesFromStorage(): PersonalPreferences {
       ? (parsed.activeGenre as GenreFilter)
       : 'Todos';
 
+    const palette = VALID_PALETTES.includes(parsed.palette as ThemePaletteId)
+      ? (parsed.palette as ThemePaletteId)
+      : 'cinabrio';
+
     return {
       clientId:
         typeof parsed.clientId === 'string' && parsed.clientId.length > 4
@@ -54,6 +66,7 @@ export function loadPreferencesFromStorage(): PersonalPreferences {
           ? parsed.personalRatings
           : {},
       activeGenre,
+      palette,
     };
   } catch {
     return createDefaultPreferences();

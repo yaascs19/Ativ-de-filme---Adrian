@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +12,15 @@ export type MovieGenre =
   | 'Comédia';
 
 export type EvaluationChoice = 'like' | 'dislike';
+
+export type ThemePaletteId = 'cinabrio' | 'cobalto' | 'esmeralda' | 'noturno';
+
+export const VALID_PALETTES: ThemePaletteId[] = [
+  'cinabrio',
+  'cobalto',
+  'esmeralda',
+  'noturno',
+];
 
 export interface MovieRecord {
   id: string;
@@ -37,9 +47,43 @@ export interface ChatMessageRecord {
   createdAt: number;
 }
 
+export interface AuthUserRecord {
+  id: string;
+  userKey: string;
+  name: string;
+  email: string;
+  createdAt: number;
+}
+
+export interface UserActivityRecord {
+  watchlistIds: string[];
+  personalRatings: Record<string, number>;
+  palette: ThemePaletteId;
+}
+
+interface LocalUserRecord {
+  id: string;
+  name: string;
+  email: string;
+  passwordHash: string;
+  palette: ThemePaletteId;
+  createdAt: number;
+}
+
+interface LocalSessionRecord {
+  tokenHash: string;
+  userId: string;
+  createdAt: number;
+  expiresAt: number;
+}
+
 interface LocalDatabaseSchema {
   movies: MovieRecord[];
   messages: ChatMessageRecord[];
+  users: LocalUserRecord[];
+  sessions: LocalSessionRecord[];
+  watchlists: Record<string, string[]>;
+  personalRatings: Record<string, Record<string, number>>;
 }
 
 export const VALID_GENRES: MovieGenre[] = [
@@ -59,9 +103,26 @@ const ALLOWED_POSTERS = new Set<string>([
   '/assets/aistudio/filme6_6b1c72a1.jpg',
 ]);
 
+const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 dias
+
 export function sanitizeText(value: unknown, maxLen: number): string {
   if (typeof value !== 'string') return '';
   return value.trim().replace(/\s+/g, ' ').slice(0, maxLen);
+}
+
+export function sanitizeEmail(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  return value.trim().toLowerCase().slice(0, 120);
+}
+
+export function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 120;
+}
+
+export function sanitizePalette(value: unknown): ThemePaletteId {
+  return VALID_PALETTES.includes(value as ThemePaletteId)
+    ? (value as ThemePaletteId)
+    : 'cinabrio';
 }
 
 export function sanitizePosterUrl(value: unknown): string {
@@ -89,6 +150,40 @@ export function sanitizePosterUrl(value: unknown): string {
     return fallback;
   }
   return fallback;
+}
+
+// ---------------------------------------------------------------------------
+// Criptografia de senha (scrypt) e hash de token de sessão (SHA-256)
+// ---------------------------------------------------------------------------
+
+function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derived = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${derived}`;
+}
+
+function verifyPassword(password: string, storedHash: string): boolean {
+  const parts = storedHash.split(':');
+  if (parts.length !== 2) return false;
+  const [salt, expectedHex] = parts;
+  if (!salt || !expectedHex) return false;
+
+  try {
+    const derived = crypto.scryptSync(password, salt, 64);
+    const expected = Buffer.from(expectedHex, 'hex');
+    if (derived.length !== expected.length) return false;
+    return crypto.timingSafeEqual(derived, expected);
+  } catch {
+    return false;
+  }
+}
+
+function generateSessionToken(): string {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
+function hashSessionToken(rawToken: string): string {
+  return crypto.createHash('sha256').update(rawToken).digest('hex');
 }
 
 export function isSqlServerConfigured(): boolean {
@@ -139,6 +234,7 @@ function parseSqlServerConfig(): {
 
 let sqlPoolPromise: Promise<sql.ConnectionPool> | null = null;
 let posterColumnEnsured = false;
+let authSchemaEnsured = false;
 
 async function ensurePosterColumnMax(pool: sql.ConnectionPool): Promise<void> {
   if (posterColumnEnsured) return;
@@ -156,6 +252,71 @@ async function ensurePosterColumnMax(pool: sql.ConnectionPool): Promise<void> {
   } catch (err) {
     console.warn('[sqlserver] Não foi possível ampliar PosterUrl automaticamente:', err);
   }
+}
+
+async function ensureAuthSchema(pool: sql.ConnectionPool): Promise<void> {
+  if (authSchemaEnsured) return;
+  await pool.request().query(`
+    IF OBJECT_ID('dbo.Usuarios', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.Usuarios (
+        Id        INT IDENTITY(1,1) NOT NULL,
+        Nome      NVARCHAR(40)      NOT NULL,
+        Email     NVARCHAR(120)     NOT NULL,
+        SenhaHash NVARCHAR(256)     NOT NULL,
+        Paleta    NVARCHAR(20)      NOT NULL CONSTRAINT DF_Usuarios_Paleta DEFAULT (N'cinabrio'),
+        CriadoEm  DATETIME2(0)      NOT NULL CONSTRAINT DF_Usuarios_CriadoEm DEFAULT (SYSUTCDATETIME()),
+        CONSTRAINT PK_Usuarios PRIMARY KEY CLUSTERED (Id),
+        CONSTRAINT UQ_Usuarios_Email UNIQUE (Email)
+      );
+    END;
+
+    IF OBJECT_ID('dbo.SessoesUsuarios', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.SessoesUsuarios (
+        Id        INT IDENTITY(1,1) NOT NULL,
+        UsuarioId INT               NOT NULL,
+        TokenHash NVARCHAR(64)      NOT NULL,
+        CriadoEm  DATETIME2(0)      NOT NULL CONSTRAINT DF_Sessoes_CriadoEm DEFAULT (SYSUTCDATETIME()),
+        ExpiraEm  DATETIME2(0)      NOT NULL,
+        CONSTRAINT PK_SessoesUsuarios PRIMARY KEY CLUSTERED (Id),
+        CONSTRAINT FK_Sessoes_Usuarios FOREIGN KEY (UsuarioId)
+          REFERENCES dbo.Usuarios (Id) ON DELETE CASCADE,
+        CONSTRAINT UQ_Sessoes_TokenHash UNIQUE (TokenHash)
+      );
+    END;
+
+    IF OBJECT_ID('dbo.ListaPessoal', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.ListaPessoal (
+        Id                   INT IDENTITY(1,1) NOT NULL,
+        IdentificadorUsuario NVARCHAR(64)      NOT NULL,
+        FilmeId              INT               NOT NULL,
+        SalvoEm              DATETIME2(0)      NOT NULL CONSTRAINT DF_Lista_SalvoEm DEFAULT (SYSUTCDATETIME()),
+        CONSTRAINT PK_ListaPessoal PRIMARY KEY CLUSTERED (Id),
+        CONSTRAINT FK_Lista_Filmes FOREIGN KEY (FilmeId)
+          REFERENCES dbo.Filmes (Id) ON DELETE CASCADE,
+        CONSTRAINT UQ_Lista_Usuario_Filme UNIQUE (IdentificadorUsuario, FilmeId)
+      );
+    END;
+
+    IF OBJECT_ID('dbo.NotasPessoais', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.NotasPessoais (
+        Id                   INT IDENTITY(1,1) NOT NULL,
+        IdentificadorUsuario NVARCHAR(64)      NOT NULL,
+        FilmeId              INT               NOT NULL,
+        Nota                 TINYINT           NOT NULL,
+        AtualizadoEm         DATETIME2(0)      NOT NULL CONSTRAINT DF_Notas_AtualizadoEm DEFAULT (SYSUTCDATETIME()),
+        CONSTRAINT PK_NotasPessoais PRIMARY KEY CLUSTERED (Id),
+        CONSTRAINT FK_Notas_Filmes FOREIGN KEY (FilmeId)
+          REFERENCES dbo.Filmes (Id) ON DELETE CASCADE,
+        CONSTRAINT CK_Notas_Valor CHECK (Nota BETWEEN 1 AND 5),
+        CONSTRAINT UQ_Notas_Usuario_Filme UNIQUE (IdentificadorUsuario, FilmeId)
+      );
+    END;
+  `);
+  authSchemaEnsured = true;
 }
 
 async function getSqlPool(): Promise<sql.ConnectionPool> {
@@ -361,6 +522,10 @@ function createSeedDatabase(): LocalDatabaseSchema {
         createdAt: now - 1000 * 60 * 5,
       },
     ],
+    users: [],
+    sessions: [],
+    watchlists: {},
+    personalRatings: {},
   };
 }
 
@@ -388,6 +553,14 @@ function loadLocalDb(): LocalDatabaseSchema {
         dislikedBy: Array.isArray(m.dislikedBy) ? m.dislikedBy : [],
       })),
       messages: parsed.messages,
+      users: Array.isArray(parsed.users) ? parsed.users : [],
+      sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
+      watchlists:
+        parsed.watchlists && typeof parsed.watchlists === 'object' ? parsed.watchlists : {},
+      personalRatings:
+        parsed.personalRatings && typeof parsed.personalRatings === 'object'
+          ? parsed.personalRatings
+          : {},
     };
   } catch {
     return createSeedDatabase();
@@ -404,7 +577,7 @@ function saveLocalDb(data: LocalDatabaseSchema): void {
 }
 
 // ---------------------------------------------------------------------------
-// Operações públicas (SQL Server quando configurado, JSON local caso contrário)
+// Tipos e helpers SQL Server
 // ---------------------------------------------------------------------------
 
 interface SqlMovieRow {
@@ -433,6 +606,15 @@ interface SqlChatRow {
   Autor: string;
   Texto: string;
   FilmeAnexadoId: number | null;
+  CriadoEm: Date;
+}
+
+interface SqlUserRow {
+  Id: number;
+  Nome: string;
+  Email: string;
+  SenhaHash: string;
+  Paleta: string;
   CriadoEm: Date;
 }
 
@@ -469,6 +651,527 @@ function mapSqlMovies(movieRows: SqlMovieRow[], evalRows: SqlEvalRow[]): MovieRe
     createdAt: new Date(row.CriadoEm).getTime(),
   }));
 }
+
+function toUserKey(userId: string | number): string {
+  const str = String(userId);
+  return str.startsWith('usr-') ? str : `usr-${str}`;
+}
+
+async function loadSqlUserActivity(
+  pool: sql.ConnectionPool,
+  userKey: string,
+  palette: ThemePaletteId
+): Promise<UserActivityRecord> {
+  const [watchlistRes, ratingsRes] = await Promise.all([
+    pool
+      .request()
+      .input('Usuario', sql.NVarChar(64), userKey)
+      .query<{ FilmeId: number }>(`
+        SELECT FilmeId
+        FROM dbo.ListaPessoal
+        WHERE IdentificadorUsuario = @Usuario
+        ORDER BY SalvoEm DESC
+      `),
+    pool
+      .request()
+      .input('Usuario', sql.NVarChar(64), userKey)
+      .query<{ FilmeId: number; Nota: number }>(`
+        SELECT FilmeId, Nota
+        FROM dbo.NotasPessoais
+        WHERE IdentificadorUsuario = @Usuario
+      `),
+  ]);
+
+  const personalRatings: Record<string, number> = {};
+  for (const row of ratingsRes.recordset) {
+    personalRatings[String(row.FilmeId)] = Number(row.Nota);
+  }
+
+  return {
+    watchlistIds: watchlistRes.recordset.map((r) => String(r.FilmeId)),
+    personalRatings,
+    palette,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Autenticação e atividade por conta
+// ---------------------------------------------------------------------------
+
+export async function registerUserAccount(input: {
+  name: string;
+  email: string;
+  password: string;
+  palette: ThemePaletteId;
+}): Promise<
+  | { ok: true; user: AuthUserRecord; activity: UserActivityRecord; sessionToken: string }
+  | { ok: false; code: 'EMAIL_EXISTS' }
+> {
+  const passwordHash = hashPassword(input.password);
+  const rawToken = generateSessionToken();
+  const tokenHash = hashSessionToken(rawToken);
+  const expiresAtMs = Date.now() + SESSION_TTL_MS;
+
+  if (!isSqlServerConfigured()) {
+    const db = loadLocalDb();
+    if (db.users.some((u) => u.email.toLowerCase() === input.email)) {
+      return { ok: false, code: 'EMAIL_EXISTS' };
+    }
+
+    const userId = `usr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const newUser: LocalUserRecord = {
+      id: userId,
+      name: input.name,
+      email: input.email,
+      passwordHash,
+      palette: input.palette,
+      createdAt: Date.now(),
+    };
+
+    db.users.push(newUser);
+    db.sessions = [
+      ...db.sessions.filter((s) => s.expiresAt > Date.now()),
+      {
+        tokenHash,
+        userId,
+        createdAt: Date.now(),
+        expiresAt: expiresAtMs,
+      },
+    ];
+    db.watchlists[userId] = [];
+    db.personalRatings[userId] = {};
+    saveLocalDb(db);
+
+    return {
+      ok: true,
+      user: {
+        id: userId,
+        userKey: userId,
+        name: newUser.name,
+        email: newUser.email,
+        createdAt: newUser.createdAt,
+      },
+      activity: {
+        watchlistIds: [],
+        personalRatings: {},
+        palette: newUser.palette,
+      },
+      sessionToken: rawToken,
+    };
+  }
+
+  const pool = await getSqlPool();
+  await ensureAuthSchema(pool);
+
+  const existingRes = await pool
+    .request()
+    .input('Email', sql.NVarChar(120), input.email)
+    .query<{ Id: number }>(`SELECT Id FROM dbo.Usuarios WHERE Email = @Email`);
+
+  if (existingRes.recordset.length > 0) {
+    return { ok: false, code: 'EMAIL_EXISTS' };
+  }
+
+  const insertUserRes = await pool
+    .request()
+    .input('Nome', sql.NVarChar(40), input.name)
+    .input('Email', sql.NVarChar(120), input.email)
+    .input('SenhaHash', sql.NVarChar(256), passwordHash)
+    .input('Paleta', sql.NVarChar(20), input.palette)
+    .query<SqlUserRow>(`
+      INSERT INTO dbo.Usuarios (Nome, Email, SenhaHash, Paleta)
+      OUTPUT INSERTED.*
+      VALUES (@Nome, @Email, @SenhaHash, @Paleta)
+    `);
+
+  const created = insertUserRes.recordset[0];
+  const expiresAt = new Date(expiresAtMs);
+
+  await pool
+    .request()
+    .input('UsuarioId', sql.Int, created.Id)
+    .input('TokenHash', sql.NVarChar(64), tokenHash)
+    .input('ExpiraEm', sql.DateTime2, expiresAt)
+    .query(`
+      INSERT INTO dbo.SessoesUsuarios (UsuarioId, TokenHash, ExpiraEm)
+      VALUES (@UsuarioId, @TokenHash, @ExpiraEm)
+    `);
+
+  return {
+    ok: true,
+    user: {
+      id: String(created.Id),
+      userKey: toUserKey(created.Id),
+      name: created.Nome,
+      email: created.Email,
+      createdAt: new Date(created.CriadoEm).getTime(),
+    },
+    activity: {
+      watchlistIds: [],
+      personalRatings: {},
+      palette: sanitizePalette(created.Paleta),
+    },
+    sessionToken: rawToken,
+  };
+}
+
+export async function loginUserAccount(input: {
+  email: string;
+  password: string;
+}): Promise<{
+  user: AuthUserRecord;
+  activity: UserActivityRecord;
+  sessionToken: string;
+} | null> {
+  const rawToken = generateSessionToken();
+  const tokenHash = hashSessionToken(rawToken);
+  const expiresAtMs = Date.now() + SESSION_TTL_MS;
+
+  if (!isSqlServerConfigured()) {
+    const db = loadLocalDb();
+    const user = db.users.find((u) => u.email.toLowerCase() === input.email);
+    if (!user || !verifyPassword(input.password, user.passwordHash)) {
+      return null;
+    }
+
+    db.sessions = [
+      ...db.sessions.filter((s) => s.expiresAt > Date.now()),
+      {
+        tokenHash,
+        userId: user.id,
+        createdAt: Date.now(),
+        expiresAt: expiresAtMs,
+      },
+    ].slice(-200);
+    saveLocalDb(db);
+
+    return {
+      user: {
+        id: user.id,
+        userKey: user.id,
+        name: user.name,
+        email: user.email,
+        createdAt: user.createdAt,
+      },
+      activity: {
+        watchlistIds: db.watchlists[user.id] ?? [],
+        personalRatings: db.personalRatings[user.id] ?? {},
+        palette: sanitizePalette(user.palette),
+      },
+      sessionToken: rawToken,
+    };
+  }
+
+  const pool = await getSqlPool();
+  await ensureAuthSchema(pool);
+
+  const userRes = await pool
+    .request()
+    .input('Email', sql.NVarChar(120), input.email)
+    .query<SqlUserRow>(`
+      SELECT Id, Nome, Email, SenhaHash, Paleta, CriadoEm
+      FROM dbo.Usuarios
+      WHERE Email = @Email
+    `);
+
+  const row = userRes.recordset[0];
+  if (!row || !verifyPassword(input.password, row.SenhaHash)) {
+    return null;
+  }
+
+  const expiresAt = new Date(expiresAtMs);
+  await pool
+    .request()
+    .input('UsuarioId', sql.Int, row.Id)
+    .input('TokenHash', sql.NVarChar(64), tokenHash)
+    .input('ExpiraEm', sql.DateTime2, expiresAt)
+    .query(`
+      DELETE FROM dbo.SessoesUsuarios WHERE ExpiraEm <= SYSUTCDATETIME();
+      INSERT INTO dbo.SessoesUsuarios (UsuarioId, TokenHash, ExpiraEm)
+      VALUES (@UsuarioId, @TokenHash, @ExpiraEm);
+    `);
+
+  const userKey = toUserKey(row.Id);
+  const activity = await loadSqlUserActivity(pool, userKey, sanitizePalette(row.Paleta));
+
+  return {
+    user: {
+      id: String(row.Id),
+      userKey,
+      name: row.Nome,
+      email: row.Email,
+      createdAt: new Date(row.CriadoEm).getTime(),
+    },
+    activity,
+    sessionToken: rawToken,
+  };
+}
+
+export async function getSessionUser(rawToken: string): Promise<{
+  user: AuthUserRecord;
+  activity: UserActivityRecord;
+} | null> {
+  if (!rawToken) return null;
+  const tokenHash = hashSessionToken(rawToken);
+
+  if (!isSqlServerConfigured()) {
+    const db = loadLocalDb();
+    const now = Date.now();
+    const session = db.sessions.find(
+      (s) => s.tokenHash === tokenHash && s.expiresAt > now
+    );
+    if (!session) return null;
+
+    const user = db.users.find((u) => u.id === session.userId);
+    if (!user) return null;
+
+    return {
+      user: {
+        id: user.id,
+        userKey: user.id,
+        name: user.name,
+        email: user.email,
+        createdAt: user.createdAt,
+      },
+      activity: {
+        watchlistIds: db.watchlists[user.id] ?? [],
+        personalRatings: db.personalRatings[user.id] ?? {},
+        palette: sanitizePalette(user.palette),
+      },
+    };
+  }
+
+  const pool = await getSqlPool();
+  await ensureAuthSchema(pool);
+
+  const res = await pool
+    .request()
+    .input('TokenHash', sql.NVarChar(64), tokenHash)
+    .query<SqlUserRow>(`
+      SELECT u.Id, u.Nome, u.Email, u.SenhaHash, u.Paleta, u.CriadoEm
+      FROM dbo.SessoesUsuarios s
+      INNER JOIN dbo.Usuarios u ON u.Id = s.UsuarioId
+      WHERE s.TokenHash = @TokenHash AND s.ExpiraEm > SYSUTCDATETIME()
+    `);
+
+  const row = res.recordset[0];
+  if (!row) return null;
+
+  const userKey = toUserKey(row.Id);
+  const activity = await loadSqlUserActivity(pool, userKey, sanitizePalette(row.Paleta));
+
+  return {
+    user: {
+      id: String(row.Id),
+      userKey,
+      name: row.Nome,
+      email: row.Email,
+      createdAt: new Date(row.CriadoEm).getTime(),
+    },
+    activity,
+  };
+}
+
+export async function logoutSession(rawToken: string): Promise<void> {
+  if (!rawToken) return;
+  const tokenHash = hashSessionToken(rawToken);
+
+  if (!isSqlServerConfigured()) {
+    const db = loadLocalDb();
+    const nextSessions = db.sessions.filter((s) => s.tokenHash !== tokenHash);
+    if (nextSessions.length !== db.sessions.length) {
+      db.sessions = nextSessions;
+      saveLocalDb(db);
+    }
+    return;
+  }
+
+  const pool = await getSqlPool();
+  await ensureAuthSchema(pool);
+  await pool
+    .request()
+    .input('TokenHash', sql.NVarChar(64), tokenHash)
+    .query(`DELETE FROM dbo.SessoesUsuarios WHERE TokenHash = @TokenHash`);
+}
+
+export async function toggleUserWatchlist(
+  userKey: string,
+  movieId: string
+): Promise<string[] | null> {
+  if (!isSqlServerConfigured()) {
+    const db = loadLocalDb();
+    if (!db.movies.some((m) => m.id === movieId)) return null;
+    const current = db.watchlists[userKey] ?? [];
+    const exists = current.includes(movieId);
+    const next = exists ? current.filter((id) => id !== movieId) : [movieId, ...current];
+    db.watchlists[userKey] = next;
+    saveLocalDb(db);
+    return next;
+  }
+
+  const numericMovieId = Number(movieId);
+  if (!Number.isInteger(numericMovieId) || numericMovieId <= 0) return null;
+
+  const pool = await getSqlPool();
+  await ensureAuthSchema(pool);
+
+  const movieCheck = await pool
+    .request()
+    .input('FilmeId', sql.Int, numericMovieId)
+    .query<{ Id: number }>(`SELECT Id FROM dbo.Filmes WHERE Id = @FilmeId`);
+  if (!movieCheck.recordset[0]) return null;
+
+  const existing = await pool
+    .request()
+    .input('Usuario', sql.NVarChar(64), userKey)
+    .input('FilmeId', sql.Int, numericMovieId)
+    .query<{ Id: number }>(`
+      SELECT Id FROM dbo.ListaPessoal
+      WHERE IdentificadorUsuario = @Usuario AND FilmeId = @FilmeId
+    `);
+
+  if (existing.recordset[0]) {
+    await pool
+      .request()
+      .input('Usuario', sql.NVarChar(64), userKey)
+      .input('FilmeId', sql.Int, numericMovieId)
+      .query(`
+        DELETE FROM dbo.ListaPessoal
+        WHERE IdentificadorUsuario = @Usuario AND FilmeId = @FilmeId
+      `);
+  } else {
+    await pool
+      .request()
+      .input('Usuario', sql.NVarChar(64), userKey)
+      .input('FilmeId', sql.Int, numericMovieId)
+      .query(`
+        INSERT INTO dbo.ListaPessoal (IdentificadorUsuario, FilmeId)
+        VALUES (@Usuario, @FilmeId)
+      `);
+  }
+
+  const listRes = await pool
+    .request()
+    .input('Usuario', sql.NVarChar(64), userKey)
+    .query<{ FilmeId: number }>(`
+      SELECT FilmeId FROM dbo.ListaPessoal
+      WHERE IdentificadorUsuario = @Usuario
+      ORDER BY SalvoEm DESC
+    `);
+
+  return listRes.recordset.map((r) => String(r.FilmeId));
+}
+
+export async function saveUserMovieRating(
+  userKey: string,
+  movieId: string,
+  rating: number
+): Promise<Record<string, number> | null> {
+  const safeRating = Math.round(rating);
+  if (!Number.isInteger(safeRating) || safeRating < 1 || safeRating > 5) return null;
+
+  if (!isSqlServerConfigured()) {
+    const db = loadLocalDb();
+    if (!db.movies.some((m) => m.id === movieId)) return null;
+    const current = db.personalRatings[userKey] ?? {};
+    const next = { ...current, [movieId]: safeRating };
+    db.personalRatings[userKey] = next;
+    saveLocalDb(db);
+    return next;
+  }
+
+  const numericMovieId = Number(movieId);
+  if (!Number.isInteger(numericMovieId) || numericMovieId <= 0) return null;
+
+  const pool = await getSqlPool();
+  await ensureAuthSchema(pool);
+
+  const movieCheck = await pool
+    .request()
+    .input('FilmeId', sql.Int, numericMovieId)
+    .query<{ Id: number }>(`SELECT Id FROM dbo.Filmes WHERE Id = @FilmeId`);
+  if (!movieCheck.recordset[0]) return null;
+
+  const existing = await pool
+    .request()
+    .input('Usuario', sql.NVarChar(64), userKey)
+    .input('FilmeId', sql.Int, numericMovieId)
+    .query<{ Id: number }>(`
+      SELECT Id FROM dbo.NotasPessoais
+      WHERE IdentificadorUsuario = @Usuario AND FilmeId = @FilmeId
+    `);
+
+  if (existing.recordset[0]) {
+    await pool
+      .request()
+      .input('Usuario', sql.NVarChar(64), userKey)
+      .input('FilmeId', sql.Int, numericMovieId)
+      .input('Nota', sql.TinyInt, safeRating)
+      .query(`
+        UPDATE dbo.NotasPessoais
+        SET Nota = @Nota, AtualizadoEm = SYSUTCDATETIME()
+        WHERE IdentificadorUsuario = @Usuario AND FilmeId = @FilmeId
+      `);
+  } else {
+    await pool
+      .request()
+      .input('Usuario', sql.NVarChar(64), userKey)
+      .input('FilmeId', sql.Int, numericMovieId)
+      .input('Nota', sql.TinyInt, safeRating)
+      .query(`
+        INSERT INTO dbo.NotasPessoais (IdentificadorUsuario, FilmeId, Nota)
+        VALUES (@Usuario, @FilmeId, @Nota)
+      `);
+  }
+
+  const allRes = await pool
+    .request()
+    .input('Usuario', sql.NVarChar(64), userKey)
+    .query<{ FilmeId: number; Nota: number }>(`
+      SELECT FilmeId, Nota FROM dbo.NotasPessoais
+      WHERE IdentificadorUsuario = @Usuario
+    `);
+
+  const nextRatings: Record<string, number> = {};
+  for (const r of allRes.recordset) {
+    nextRatings[String(r.FilmeId)] = Number(r.Nota);
+  }
+  return nextRatings;
+}
+
+export async function updateUserPalette(
+  userId: string,
+  palette: ThemePaletteId
+): Promise<ThemePaletteId> {
+  const safePalette = sanitizePalette(palette);
+
+  if (!isSqlServerConfigured()) {
+    const db = loadLocalDb();
+    const target = db.users.find((u) => u.id === userId);
+    if (target) {
+      target.palette = safePalette;
+      saveLocalDb(db);
+    }
+    return safePalette;
+  }
+
+  const numericId = Number(userId);
+  if (!Number.isInteger(numericId) || numericId <= 0) return safePalette;
+
+  const pool = await getSqlPool();
+  await ensureAuthSchema(pool);
+  await pool
+    .request()
+    .input('Id', sql.Int, numericId)
+    .input('Paleta', sql.NVarChar(20), safePalette)
+    .query(`UPDATE dbo.Usuarios SET Paleta = @Paleta WHERE Id = @Id`);
+
+  return safePalette;
+}
+
+// ---------------------------------------------------------------------------
+// Catálogo, Avaliações e Chat (SQL Server quando configurado, JSON local caso contrário)
+// ---------------------------------------------------------------------------
 
 export async function getHealthStatus(): Promise<{
   ok: boolean;

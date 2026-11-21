@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Film, Search } from 'lucide-react';
+import { Bookmark, Film, LogIn, Palette, Search, Star, UserCheck } from 'lucide-react';
+import { AuthModal } from './components/AuthModal';
 import { CommunityChat } from './components/CommunityChat';
 import { Footer } from './components/Footer';
 import { Header, MobileView } from './components/Header';
 import { MovieCard } from './components/MovieCard';
 import { MovieDetailModal } from './components/MovieDetailModal';
 import { RecommendMovieModal } from './components/RecommendMovieModal';
+import { THEME_PALETTES } from './data/palettes';
 import { GENRES } from './data/posters';
 import {
+  AuthUser,
   ChatMessage,
   EvaluationChoice,
   GenreFilter,
   MovieItem,
   PersonalPreferences,
+  ThemePaletteId,
+  UserActivity,
 } from './types/cinema';
 import {
   loadPreferencesFromStorage,
@@ -23,6 +28,10 @@ type SortOption = 'recentes' | 'votos' | 'nota';
 
 export default function App() {
   const [prefs, setPrefs] = useState<PersonalPreferences>(() => loadPreferencesFromStorage());
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
+  const [authChecked, setAuthChecked] = useState<boolean>(false);
+
   const [movies, setMovies] = useState<MovieItem[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -34,14 +43,119 @@ export default function App() {
 
   const [selectedMovieId, setSelectedMovieId] = useState<string | null>(null);
   const [isRecommendOpen, setIsRecommendOpen] = useState<boolean>(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
+  const [authPromptReason, setAuthPromptReason] = useState<string>('');
   const [attachedMovieId, setAttachedMovieId] = useState<string | null>(null);
 
   const [isConnected, setIsConnected] = useState<boolean>(false);
 
-  // Salva preferências pessoais (nome, Minha Lista, avaliações e filtro) no localStorage
+  const authHeaders = useMemo<Record<string, string>>(() => {
+    const headers: Record<string, string> = {};
+    if (sessionToken) {
+      headers.Authorization = `Bearer ${sessionToken}`;
+    }
+    return headers;
+  }, [sessionToken]);
+
+  // Salva preferências locais leves de visualização (gênero e paleta de prévia)
   useEffect(() => {
     savePreferencesToStorage(prefs);
   }, [prefs]);
+
+  // Aplica a paleta escolhida na raiz do documento
+  useEffect(() => {
+    document.documentElement.dataset.palette = prefs.palette;
+    document.documentElement.classList.toggle('dark', prefs.palette === 'noturno');
+  }, [prefs.palette]);
+
+  // Restaura sessão autenticada via cookie HttpOnly no carregamento
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/auth/me', { credentials: 'include' });
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          user: AuthUser | null;
+          activity: UserActivity | null;
+        };
+        if (!active) return;
+        if (data.user && data.activity) {
+          setAuthUser(data.user);
+          setPrefs((prev) => ({
+            ...prev,
+            userName: data.user!.name,
+            watchlistIds: data.activity!.watchlistIds,
+            personalRatings: data.activity!.personalRatings,
+            palette: data.activity!.palette,
+          }));
+        } else {
+          setAuthUser(null);
+          setPrefs((prev) => ({
+            ...prev,
+            userName: '',
+            watchlistIds: [],
+            personalRatings: {},
+          }));
+        }
+      } catch {
+        // Ignora erro momentâneo na restauração de sessão
+      } finally {
+        if (active) setAuthChecked(true);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const openLoginPrompt = useCallback((reason = '') => {
+    setAuthPromptReason(reason);
+    setIsAuthModalOpen(true);
+  }, []);
+
+  const handleAuthSuccess = useCallback(
+    (user: AuthUser, activity: UserActivity, token?: string) => {
+      setAuthUser(user);
+      if (token) {
+        setSessionToken(token);
+      }
+      setAuthPromptReason('');
+      setPrefs((prev) => ({
+        ...prev,
+        userName: user.name,
+        watchlistIds: activity.watchlistIds,
+        personalRatings: activity.personalRatings,
+        palette: activity.palette,
+      }));
+    },
+    []
+  );
+
+  const handleLogout = useCallback(async () => {
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'X-Requested-With': 'CineRoda',
+          ...authHeaders,
+        },
+      });
+    } catch {
+      // Limpa estado local mesmo em falha momentânea
+    }
+    setAuthUser(null);
+    setSessionToken(null);
+    setIsRecommendOpen(false);
+    setPrefs((prev) => ({
+      ...prev,
+      userName: '',
+      watchlistIds: [],
+      personalRatings: {},
+    }));
+  }, [authHeaders]);
 
   const syncCatalogAndChat = useCallback(async (isInitial = false) => {
     try {
@@ -102,12 +216,16 @@ export default function App() {
     };
   }, [syncCatalogAndChat]);
 
-  // Filtro e ordenação do catálogo usando arrays e condicionais
+  const activeWatchlistIds = authUser ? prefs.watchlistIds : [];
+  const activePersonalRatings = authUser ? prefs.personalRatings : {};
+  const activeUserKey = authUser?.userKey ?? '';
+
+  // Filtro e ordenação do catálogo
   const visibleMovies = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
 
     const filtered = movies.filter((movie) => {
-      if (activeView === 'lista' && !prefs.watchlistIds.includes(movie.id)) {
+      if (activeView === 'lista' && !activeWatchlistIds.includes(movie.id)) {
         return false;
       }
       if (prefs.activeGenre !== 'Todos' && movie.genre !== prefs.activeGenre) {
@@ -131,52 +249,182 @@ export default function App() {
         );
       }
       if (sortBy === 'nota') {
-        return b.rating - a.rating;
+        return (
+          (activePersonalRatings[b.id] ?? b.rating) -
+          (activePersonalRatings[a.id] ?? a.rating)
+        );
       }
       return b.createdAt - a.createdAt;
     });
-  }, [movies, activeView, prefs.watchlistIds, prefs.activeGenre, searchQuery, sortBy]);
+  }, [
+    movies,
+    activeView,
+    activeWatchlistIds,
+    activePersonalRatings,
+    prefs.activeGenre,
+    searchQuery,
+    sortBy,
+  ]);
 
   const averageRating = useMemo(() => {
     if (movies.length === 0) return '0.0';
-    const sum = movies.reduce((acc, item) => acc + item.rating, 0);
+    const sum = movies.reduce(
+      (acc, item) => acc + (activePersonalRatings[item.id] ?? item.rating),
+      0
+    );
     return (sum / movies.length).toFixed(1);
-  }, [movies]);
+  }, [movies, activePersonalRatings]);
+
+  const featuredMovie = useMemo(() => {
+    if (movies.length === 0) return null;
+    return [...movies].sort((a, b) => {
+      const scoreDiff =
+        b.likedBy.length - b.dislikedBy.length - (a.likedBy.length - a.dislikedBy.length);
+      if (scoreDiff !== 0) return scoreDiff;
+      return (
+        (activePersonalRatings[b.id] ?? b.rating) -
+        (activePersonalRatings[a.id] ?? a.rating)
+      );
+    })[0];
+  }, [movies, activePersonalRatings]);
 
   const selectedMovie = useMemo(
     () => movies.find((m) => m.id === selectedMovieId) ?? null,
     [movies, selectedMovieId]
   );
 
-  const handleToggleWatchlist = useCallback((movieId: string) => {
-    setPrefs((prev) => {
-      const exists = prev.watchlistIds.includes(movieId);
-      return {
-        ...prev,
-        watchlistIds: exists
-          ? prev.watchlistIds.filter((id) => id !== movieId)
-          : [...prev.watchlistIds, movieId],
-      };
-    });
-  }, []);
+  const handleToggleWatchlist = useCallback(
+    async (movieId: string) => {
+      if (!authUser) {
+        openLoginPrompt('Entre ou crie uma conta para salvar filmes na sua lista pessoal.');
+        return;
+      }
 
-  const handleRateMovie = useCallback((movieId: string, rating: number) => {
-    setPrefs((prev) => ({
-      ...prev,
-      personalRatings: {
-        ...prev.personalRatings,
-        [movieId]: rating,
-      },
-    }));
-  }, []);
+      setPrefs((prev) => {
+        const exists = prev.watchlistIds.includes(movieId);
+        return {
+          ...prev,
+          watchlistIds: exists
+            ? prev.watchlistIds.filter((id) => id !== movieId)
+            : [movieId, ...prev.watchlistIds],
+        };
+      });
+
+      try {
+        const res = await fetch('/api/user/activity', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'CineRoda',
+            ...authHeaders,
+          },
+          body: JSON.stringify({ action: 'toggleWatchlist', movieId }),
+        });
+        if (res.status === 401) {
+          openLoginPrompt('Sua sessão expirou. Entre novamente para salvar sua lista.');
+          return;
+        }
+        if (res.ok) {
+          const data = (await res.json()) as { watchlistIds?: string[] };
+          if (Array.isArray(data.watchlistIds)) {
+            setPrefs((prev) => ({ ...prev, watchlistIds: data.watchlistIds! }));
+          }
+        }
+      } catch {
+        // Falha silenciosa em desconexão momentânea
+      }
+    },
+    [authUser, authHeaders, openLoginPrompt]
+  );
+
+  const handleRateMovie = useCallback(
+    async (movieId: string, rating: number) => {
+      if (!authUser) {
+        openLoginPrompt('Entre ou crie uma conta para salvar suas notas nos filmes.');
+        return;
+      }
+
+      setPrefs((prev) => ({
+        ...prev,
+        personalRatings: {
+          ...prev.personalRatings,
+          [movieId]: rating,
+        },
+      }));
+
+      try {
+        const res = await fetch('/api/user/activity', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'CineRoda',
+            ...authHeaders,
+          },
+          body: JSON.stringify({ action: 'rateMovie', movieId, rating }),
+        });
+        if (res.status === 401) {
+          openLoginPrompt('Sua sessão expirou. Entre novamente para salvar sua nota.');
+          return;
+        }
+        if (res.ok) {
+          const data = (await res.json()) as { personalRatings?: Record<string, number> };
+          if (data.personalRatings) {
+            setPrefs((prev) => ({ ...prev, personalRatings: data.personalRatings! }));
+          }
+        }
+      } catch {
+        // Falha silenciosa em desconexão momentânea
+      }
+    },
+    [authUser, authHeaders, openLoginPrompt]
+  );
+
+  const handleChangePalette = useCallback(
+    async (palette: ThemePaletteId) => {
+      setPrefs((prev) => ({ ...prev, palette }));
+
+      if (!authUser) return;
+      try {
+        await fetch('/api/user/activity', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'CineRoda',
+            ...authHeaders,
+          },
+          body: JSON.stringify({ action: 'setPalette', palette }),
+        });
+      } catch {
+        // Ignora erro momentâneo ao persistir paleta
+      }
+    },
+    [authUser, authHeaders]
+  );
 
   const handleEvaluateMovie = async (movieId: string, choice: EvaluationChoice) => {
+    if (!authUser) {
+      openLoginPrompt('Entre ou crie uma conta para registrar seu Gostei ou Não gostei.');
+      return;
+    }
+
     try {
       const res = await fetch(`/api/movies/${encodeURIComponent(movieId)}/evaluate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId: prefs.clientId, choice }),
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'CineRoda',
+          ...authHeaders,
+        },
+        body: JSON.stringify({ choice }),
       });
+      if (res.status === 401) {
+        openLoginPrompt('Sua sessão expirou. Entre novamente para avaliar.');
+        return;
+      }
       if (!res.ok) return;
       const data = (await res.json()) as { movie?: MovieItem };
       if (data.movie) {
@@ -192,20 +440,31 @@ export default function App() {
     text: string,
     movieIdToAttach?: string
   ): Promise<boolean> => {
-    if (!prefs.userName) return false;
-    const msgId = `msg-${prefs.clientId.slice(0, 6)}-${Date.now()}`;
+    if (!authUser) {
+      openLoginPrompt('Entre na sua conta para participar do chat da comunidade.');
+      return false;
+    }
+    const msgId = `msg-${authUser.id.slice(0, 6)}-${Date.now()}`;
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'CineRoda',
+          ...authHeaders,
+        },
         body: JSON.stringify({
           id: msgId,
-          author: prefs.userName,
           text,
           attachedMovieId: movieIdToAttach,
         }),
       });
+      if (res.status === 401) {
+        openLoginPrompt('Sua sessão expirou. Entre novamente para enviar mensagens.');
+        return false;
+      }
       if (!res.ok) return false;
       const data = (await res.json()) as { message?: ChatMessage };
       if (data.message) {
@@ -220,23 +479,28 @@ export default function App() {
     }
   };
 
-  const handleMovieCreated = async (
-    newMovie: MovieItem,
-    shareInChat: boolean,
-    authorName: string
-  ) => {
-    setMovies((prev) => (prev.some((m) => m.id === newMovie.id) ? prev : [newMovie, ...prev]));
-    if (!prefs.userName && authorName) {
-      setPrefs((prev) => ({ ...prev, userName: authorName }));
+  const handleOpenRecommendModal = useCallback(() => {
+    if (!authUser) {
+      openLoginPrompt('Entre ou crie uma conta para indicar um novo filme ao catálogo.');
+      return;
     }
+    setIsRecommendOpen(true);
+  }, [authUser, openLoginPrompt]);
 
-    if (shareInChat) {
+  const handleMovieCreated = async (newMovie: MovieItem, shareInChat: boolean) => {
+    setMovies((prev) => (prev.some((m) => m.id === newMovie.id) ? prev : [newMovie, ...prev]));
+
+    if (shareInChat && authUser) {
       await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'CineRoda',
+          ...authHeaders,
+        },
         body: JSON.stringify({
           id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          author: authorName,
           text: `Acabei de adicionar "${newMovie.title}" no catálogo! ${newMovie.recommendationNote}`,
           attachedMovieId: newMovie.id,
         }),
@@ -246,6 +510,10 @@ export default function App() {
   };
 
   const handleRecommendInChat = (movie: MovieItem) => {
+    if (!authUser) {
+      openLoginPrompt('Entre na sua conta para recomendar esse filme no chat.');
+      return;
+    }
     setAttachedMovieId(movie.id);
     setActiveView('chat');
   };
@@ -264,59 +532,251 @@ export default function App() {
 
   const genreFilters: GenreFilter[] = ['Todos', ...GENRES];
 
+  const showSpotlight =
+    activeView === 'catalogo' &&
+    !searchQuery.trim() &&
+    prefs.activeGenre === 'Todos' &&
+    !loading &&
+    !loadError &&
+    featuredMovie !== null;
+
   return (
-    <div className="flex min-h-screen flex-col bg-[#F8F9FB] text-[#111827]">
+    <div className="flex min-h-screen flex-col bg-[var(--cr-canvas)] text-[var(--cr-ink)] transition-colors duration-200">
       <Header
         activeView={activeView}
         onSelectView={handleSelectView}
-        watchlistCount={prefs.watchlistIds.length}
+        watchlistCount={activeWatchlistIds.length}
         chatMessagesCount={messages.length}
-        onOpenRecommendModal={() => setIsRecommendOpen(true)}
+        authUser={authUser}
+        onOpenAuthModal={() => openLoginPrompt('')}
+        onOpenRecommendModal={handleOpenRecommendModal}
       />
 
       <main className="mx-auto w-full max-w-[1280px] flex-1 px-4 py-6 sm:px-6 sm:py-8">
-        {/* Cabeçalho editorial + resumo rápido */}
-        <div className="mb-6 flex flex-col gap-4 border-b border-[#E2E8F0] pb-6 md:flex-row md:items-end md:justify-between">
-          <div>
-            <h1 className="font-display text-2xl font-bold tracking-tight text-[#111827] sm:text-3xl [text-wrap:balance]">
-              {activeView === 'lista'
-                ? 'Sua Lista para Assistir Depois'
-                : 'Catálogo Colaborativo de Filmes'}
-            </h1>
-            <p className="mt-1.5 text-sm text-[#475569]">
-              Explore indicações da comunidade, salve seus favoritos e converse no chat sobre o que assistir.
-            </p>
+        {/* Destaque editorial da comunidade (quando no catálogo geral) */}
+        {showSpotlight && featuredMovie && (
+          <section
+            aria-label="Filme em destaque da comunidade"
+            style={{ backgroundColor: 'var(--cr-spotlight)' }}
+            className="mb-8 overflow-hidden rounded-2xl text-white shadow-[0_20px_50px_-24px_rgba(15,23,42,0.55)] dark:border dark:border-[var(--cr-border)]"
+          >
+            <div
+              style={{
+                backgroundImage:
+                  'radial-gradient(ellipse at top left, var(--cr-spotlight-glow), transparent 58%)',
+              }}
+              className="flex flex-col justify-between p-6 sm:p-8 lg:p-10"
+            >
+              <div>
+                <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-slate-300">
+                  <span
+                    style={{ color: 'var(--cr-spotlight-kicker)' }}
+                    className="font-semibold"
+                  >
+                    Destaque da Comunidade
+                  </span>
+                  <span aria-hidden="true">·</span>
+                  <span>{featuredMovie.genre}</span>
+                  <span aria-hidden="true">·</span>
+                  <span className="tabular-nums">{featuredMovie.year}</span>
+                  <span aria-hidden="true">·</span>
+                  <span className="tabular-nums">{featuredMovie.durationMinutes} min</span>
+                </div>
+
+                <h2 className="mt-3 font-display text-2xl font-bold tracking-tight text-white sm:text-3xl lg:text-4xl [text-wrap:balance]">
+                  {featuredMovie.title}
+                </h2>
+
+                <p className="mt-1.5 text-xs sm:text-sm text-slate-300">
+                  Direção de {featuredMovie.director} · Indicado por {featuredMovie.recommendedBy}
+                </p>
+
+                <p className="mt-4 max-w-3xl font-editorial text-base italic leading-relaxed text-slate-100 sm:text-lg">
+                  “{featuredMovie.recommendationNote}”
+                </p>
+              </div>
+
+              <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border-t border-white/10 pt-5">
+                <div className="flex items-center gap-4 text-xs text-slate-300 tabular-nums">
+                  <span className="inline-flex items-center gap-1.5 font-mono text-sm font-semibold text-white">
+                    <Star className="h-4 w-4 fill-[#F59E0B] text-[#F59E0B]" aria-hidden="true" />
+                    <span>
+                      {(activePersonalRatings[featuredMovie.id] ?? featuredMovie.rating).toFixed(1)}
+                      /5
+                    </span>
+                  </span>
+                  <span aria-hidden="true" className="text-white/25">
+                    ·
+                  </span>
+                  <span className="font-mono">
+                    {featuredMovie.likedBy.length} curtidas da comunidade
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedMovieId(featuredMovie.id)}
+                    className="inline-flex min-h-[42px] items-center justify-center rounded-xl bg-[var(--cr-accent)] px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-[var(--cr-accent-hover)] whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    Ver detalhes e avaliar
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleToggleWatchlist(featuredMovie.id)}
+                    className={`inline-flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl border px-4 py-2 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                      activeWatchlistIds.includes(featuredMovie.id)
+                        ? 'border-white/30 bg-white text-[#111827]'
+                        : 'border-white/20 bg-white/10 text-white hover:bg-white/15'
+                    }`}
+                  >
+                    <Bookmark
+                      className={`h-3.5 w-3.5 ${
+                        activeWatchlistIds.includes(featuredMovie.id) ? 'fill-[#111827]' : ''
+                      }`}
+                      aria-hidden="true"
+                    />
+                    <span>
+                      {activeWatchlistIds.includes(featuredMovie.id)
+                        ? 'Salvo na Lista'
+                        : 'Salvar na Lista'}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* Cabeçalho editorial + resumo rápido + conta + seletor de paleta */}
+        <div className="mb-6 flex flex-col gap-5 border-b border-[var(--cr-border)] pb-6">
+          <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h1 className="font-display text-2xl font-bold tracking-tight text-[var(--cr-ink)] sm:text-3xl [text-wrap:balance]">
+                {activeView === 'lista'
+                  ? 'Sua Lista para Assistir Depois'
+                  : 'Catálogo Colaborativo de Filmes'}
+              </h1>
+              <p className="mt-1.5 text-sm text-[var(--cr-ink-secondary)]">
+                Explore indicações da comunidade, avalie seus filmes favoritos e converse no chat.
+              </p>
+            </div>
+
+            <dl className="flex items-center gap-6 text-xs text-[var(--cr-ink-muted)] shrink-0">
+              <div>
+                <dt>Filmes no catálogo</dt>
+                <dd className="mt-0.5 font-display text-xl font-bold text-[var(--cr-ink)] tabular-nums">
+                  {movies.length}
+                </dd>
+              </div>
+              <div className="h-8 w-px bg-[var(--cr-border)]" aria-hidden="true" />
+              <div>
+                <dt>Média geral</dt>
+                <dd className="mt-0.5 font-display text-xl font-bold text-[var(--cr-ink)] tabular-nums">
+                  {averageRating}/5
+                </dd>
+              </div>
+              <div className="h-8 w-px bg-[var(--cr-border)]" aria-hidden="true" />
+              <div>
+                <dt>Na sua lista</dt>
+                <dd className="mt-0.5 font-display text-xl font-bold text-[var(--cr-accent)] tabular-nums">
+                  {activeWatchlistIds.length}
+                </dd>
+              </div>
+            </dl>
           </div>
 
-          <dl className="flex items-center gap-6 text-xs text-[#64748B] shrink-0">
-            <div>
-              <dt>Filmes no catálogo</dt>
-              <dd className="mt-0.5 font-display text-lg font-bold text-[#111827] tabular-nums">
-                {movies.length}
-              </dd>
+          {/* Barra de conta sincronizada + Seletor de paleta de cores */}
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            {authChecked && (
+              <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--cr-border)] bg-[var(--cr-surface)] px-3.5 py-2.5 text-xs">
+                {authUser ? (
+                  <>
+                    <div className="flex items-center gap-2 text-[var(--cr-ink)]">
+                      <UserCheck className="h-4 w-4 text-[#059669]" aria-hidden="true" />
+                      <span>
+                        Conectado como <strong>{authUser.name}</strong>
+                      </span>
+                      <span className="hidden sm:inline text-[var(--cr-ink-muted)]">
+                        · Atividade salva no seu login
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => openLoginPrompt('')}
+                      className="ml-auto font-semibold text-[var(--cr-accent)] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      Minha conta
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-[var(--cr-ink-secondary)]">
+                      Entre para salvar sua lista, avaliações e preferências no seu login.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => openLoginPrompt('')}
+                      className="ml-auto inline-flex items-center gap-1.5 font-semibold text-[var(--cr-accent)] hover:underline whitespace-nowrap shrink-0 cursor-pointer"
+                    >
+                      <LogIn className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>Entrar ou criar conta</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-xs font-medium text-[var(--cr-ink-secondary)]">
+                <Palette className="h-4 w-4 text-[var(--cr-accent)]" aria-hidden="true" />
+                <span>Paleta do site</span>
+              </div>
+
+              <div
+                role="group"
+                aria-label="Escolher paleta de cores do site"
+                className="flex flex-wrap items-center gap-1.5 rounded-xl bg-[var(--cr-surface-alt)] p-1"
+              >
+                {THEME_PALETTES.map((option) => {
+                  const isSelected = prefs.palette === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      aria-pressed={isSelected}
+                      onClick={() => handleChangePalette(option.id)}
+                      className={`inline-flex min-h-[36px] items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+                        isSelected
+                          ? 'bg-[var(--cr-surface)] text-[var(--cr-ink)] font-semibold shadow-xs'
+                          : 'text-[var(--cr-ink-secondary)] hover:text-[var(--cr-ink)]'
+                      }`}
+                    >
+                      <span className="inline-flex items-center -space-x-1" aria-hidden="true">
+                        <span
+                          className="h-3.5 w-3.5 rounded-full border border-black/15"
+                          style={{ backgroundColor: option.canvasColor }}
+                        />
+                        <span
+                          className="h-3.5 w-3.5 rounded-full border border-white/60"
+                          style={{ backgroundColor: option.accentColor }}
+                        />
+                      </span>
+                      <span>{option.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <div className="h-8 w-px bg-[#E2E8F0]" aria-hidden="true" />
-            <div>
-              <dt>Média geral</dt>
-              <dd className="mt-0.5 font-display text-lg font-bold text-[#111827] tabular-nums">
-                {averageRating}/5
-              </dd>
-            </div>
-            <div className="h-8 w-px bg-[#E2E8F0]" aria-hidden="true" />
-            <div>
-              <dt>Na sua lista</dt>
-              <dd className="mt-0.5 font-display text-lg font-bold text-[#E11D48] tabular-nums">
-                {prefs.watchlistIds.length}
-              </dd>
-            </div>
-          </dl>
+          </div>
         </div>
 
         {/* Layout principal: Catálogo (8 colunas) + Chat (4 colunas) */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-start">
+        <div className="grid grid-cols-1 gap-7 lg:grid-cols-12 lg:items-start">
           {/* Coluna do catálogo (oculta no celular quando a aba Chat estiver ativa) */}
           <div
-            className={`lg:col-span-8 space-y-5 ${
+            className={`lg:col-span-8 space-y-6 ${
               activeView === 'chat' ? 'hidden lg:block' : 'block'
             }`}
           >
@@ -325,7 +785,7 @@ export default function App() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <div className="relative flex-1">
                   <Search
-                    className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#64748B]"
+                    className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--cr-ink-muted)]"
                     aria-hidden="true"
                   />
                   <input
@@ -334,7 +794,7 @@ export default function App() {
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Buscar por título, direção ou quem indicou..."
                     aria-label="Buscar filmes"
-                    className="min-h-[42px] w-full rounded-xl border border-[#E2E8F0] bg-white pl-10 pr-4 text-sm text-[#111827] placeholder:text-[#94A3B8] focus:border-[#E11D48] focus:outline-none"
+                    className="min-h-[42px] w-full rounded-xl border border-[var(--cr-border)] bg-[var(--cr-surface)] pl-10 pr-4 text-sm text-[var(--cr-ink)] shadow-2xs placeholder:text-[var(--cr-ink-muted)] focus:border-[var(--cr-accent)] focus:outline-none"
                   />
                 </div>
 
@@ -342,7 +802,7 @@ export default function App() {
                   aria-label="Ordenar filmes"
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value as SortOption)}
-                  className="min-h-[42px] rounded-xl border border-[#E2E8F0] bg-white px-3.5 text-sm font-medium text-[#334155] focus:border-[#E11D48] focus:outline-none cursor-pointer"
+                  className="min-h-[42px] rounded-xl border border-[var(--cr-border)] bg-[var(--cr-surface)] px-3.5 text-sm font-medium text-[var(--cr-ink-secondary)] shadow-2xs focus:border-[var(--cr-accent)] focus:outline-none cursor-pointer"
                 >
                   <option value="recentes">Mais recentes</option>
                   <option value="votos">Mais recomendados</option>
@@ -351,8 +811,8 @@ export default function App() {
 
                 <button
                   type="button"
-                  onClick={() => setIsRecommendOpen(true)}
-                  className="min-h-[42px] rounded-xl border border-[#E11D48] bg-[#FFF1F2] px-4 text-sm font-semibold text-[#BE123C] transition-colors hover:bg-[#FFE4E6] whitespace-nowrap shrink-0 cursor-pointer"
+                  onClick={handleOpenRecommendModal}
+                  className="min-h-[42px] rounded-xl border border-[var(--cr-accent-border)] bg-[var(--cr-accent-soft)] px-4 text-sm font-semibold text-[var(--cr-accent-text)] transition-colors hover:opacity-90 whitespace-nowrap shrink-0 cursor-pointer"
                 >
                   + Indicar Filme
                 </button>
@@ -361,7 +821,7 @@ export default function App() {
               <div
                 role="tablist"
                 aria-label="Filtrar por gênero"
-                className="flex items-center gap-1.5 overflow-x-auto rounded-xl border border-[#E2E8F0] bg-[#F1F5F9] p-1"
+                className="flex items-center gap-1.5 overflow-x-auto rounded-xl bg-[var(--cr-surface-alt)] p-1"
               >
                 {genreFilters.map((genre) => {
                   const isActive = prefs.activeGenre === genre;
@@ -374,10 +834,10 @@ export default function App() {
                       onClick={() =>
                         setPrefs((prev) => ({ ...prev, activeGenre: genre }))
                       }
-                      className={`min-h-[36px] rounded-lg px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                      className={`min-h-[36px] rounded-lg px-3.5 py-1.5 text-xs font-medium transition-all whitespace-nowrap shrink-0 cursor-pointer ${
                         isActive
-                          ? 'bg-white text-[#111827] font-semibold shadow-xs'
-                          : 'text-[#475569] hover:text-[#111827]'
+                          ? 'bg-[var(--cr-surface)] text-[var(--cr-ink)] font-semibold shadow-xs'
+                          : 'text-[var(--cr-ink-secondary)] hover:text-[var(--cr-ink)]'
                       }`}
                     >
                       {genre}
@@ -393,36 +853,52 @@ export default function App() {
                 {[1, 2, 3].map((n) => (
                   <div
                     key={n}
-                    className="h-[420px] animate-pulse rounded-2xl border border-[#E2E8F0] bg-white"
+                    className="h-[420px] animate-pulse rounded-2xl border border-[var(--cr-border)] bg-[var(--cr-surface)]"
                   />
                 ))}
               </div>
             ) : loadError ? (
-              <div className="rounded-2xl border border-[#FECACA] bg-[#FEF2F2] p-6 text-sm text-[#991B1B]">
+              <div className="rounded-2xl border border-[#FECACA] bg-[#FEF2F2] p-6 text-sm text-[#991B1B] dark:border-rose-800 dark:bg-rose-950/60 dark:text-rose-200">
                 {loadError}
               </div>
             ) : visibleMovies.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-[#CBD5E1] bg-white p-10 text-center">
-                <Film className="mx-auto h-8 w-8 text-[#94A3B8]" aria-hidden="true" />
-                <p className="mt-3 text-sm font-semibold text-[#111827]">
+              <div className="rounded-2xl border border-dashed border-[var(--cr-border-strong)] bg-[var(--cr-surface)] p-10 text-center">
+                <Film className="mx-auto h-8 w-8 text-[var(--cr-ink-muted)]" aria-hidden="true" />
+                <p className="mt-3 text-sm font-semibold text-[var(--cr-ink)]">
                   {activeView === 'lista'
-                    ? 'Sua lista ainda está vazia.'
+                    ? authUser
+                      ? 'Sua lista ainda está vazia.'
+                      : 'Entre na sua conta para ver sua lista salva.'
                     : 'Nenhum filme encontrado com esses filtros.'}
                 </p>
-                <p className="mt-1 text-xs text-[#64748B]">
+                <p className="mt-1 text-xs text-[var(--cr-ink-muted)]">
                   {activeView === 'lista'
-                    ? 'Clique em "Salvar" nos filmes do catálogo para montar sua lista pessoal.'
+                    ? authUser
+                      ? 'Clique em "Salvar" nos filmes do catálogo para montar sua lista pessoal.'
+                      : 'Com o login, os filmes que você salvar ficam disponíveis em qualquer dispositivo.'
                     : 'Tente limpar a busca ou indique um novo filme para a comunidade.'}
                 </p>
                 <div className="mt-4 flex justify-center gap-3">
                   {activeView === 'lista' ? (
-                    <button
-                      type="button"
-                      onClick={() => setActiveView('catalogo')}
-                      className="min-h-[40px] rounded-lg bg-[#111827] px-4 py-2 text-xs font-semibold text-white hover:bg-[#1E293B] cursor-pointer"
-                    >
-                      Explorar Catálogo
-                    </button>
+                    authUser ? (
+                      <button
+                        type="button"
+                        onClick={() => setActiveView('catalogo')}
+                        className="min-h-[40px] rounded-lg bg-[var(--cr-accent)] px-4 py-2 text-xs font-semibold text-white hover:bg-[var(--cr-accent-hover)] cursor-pointer"
+                      >
+                        Explorar Catálogo
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openLoginPrompt('Entre para acessar e salvar filmes na sua lista.')
+                        }
+                        className="min-h-[40px] rounded-lg bg-[var(--cr-accent)] px-4 py-2 text-xs font-semibold text-white hover:bg-[var(--cr-accent-hover)] cursor-pointer"
+                      >
+                        Entrar ou criar conta
+                      </button>
+                    )
                   ) : (
                     <button
                       type="button"
@@ -430,7 +906,7 @@ export default function App() {
                         setSearchQuery('');
                         setPrefs((prev) => ({ ...prev, activeGenre: 'Todos' }));
                       }}
-                      className="min-h-[40px] rounded-lg border border-[#E2E8F0] bg-white px-4 py-2 text-xs font-semibold text-[#111827] hover:bg-[#F8FAFC] cursor-pointer"
+                      className="min-h-[40px] rounded-lg border border-[var(--cr-border)] bg-[var(--cr-surface)] px-4 py-2 text-xs font-semibold text-[var(--cr-ink)] hover:bg-[var(--cr-surface-hover)] cursor-pointer"
                     >
                       Limpar Filtros
                     </button>
@@ -443,10 +919,12 @@ export default function App() {
                   <MovieCard
                     key={movie.id}
                     movie={movie}
-                    isSaved={prefs.watchlistIds.includes(movie.id)}
-                    hasLiked={movie.likedBy.includes(prefs.clientId)}
-                    hasDisliked={movie.dislikedBy.includes(prefs.clientId)}
-                    personalRating={prefs.personalRatings[movie.id]}
+                    isSaved={activeWatchlistIds.includes(movie.id)}
+                    hasLiked={Boolean(activeUserKey && movie.likedBy.includes(activeUserKey))}
+                    hasDisliked={Boolean(
+                      activeUserKey && movie.dislikedBy.includes(activeUserKey)
+                    )}
+                    personalRating={activePersonalRatings[movie.id]}
                     onToggleWatchlist={handleToggleWatchlist}
                     onEvaluateMovie={handleEvaluateMovie}
                     onOpenDetail={(m) => setSelectedMovieId(m.id)}
@@ -465,9 +943,9 @@ export default function App() {
             <CommunityChat
               messages={messages}
               movies={movies}
-              userName={prefs.userName}
-              onUpdateUserName={(name) =>
-                setPrefs((prev) => ({ ...prev, userName: name }))
+              authUser={authUser}
+              onOpenAuthModal={() =>
+                openLoginPrompt('Entre ou crie sua conta para conversar no chat.')
               }
               attachedMovieId={attachedMovieId}
               onChangeAttachedMovieId={setAttachedMovieId}
@@ -483,11 +961,15 @@ export default function App() {
 
       <MovieDetailModal
         movie={selectedMovie}
-        isSaved={selectedMovie ? prefs.watchlistIds.includes(selectedMovie.id) : false}
-        hasLiked={selectedMovie ? selectedMovie.likedBy.includes(prefs.clientId) : false}
-        hasDisliked={selectedMovie ? selectedMovie.dislikedBy.includes(prefs.clientId) : false}
+        isSaved={selectedMovie ? activeWatchlistIds.includes(selectedMovie.id) : false}
+        hasLiked={Boolean(
+          selectedMovie && activeUserKey && selectedMovie.likedBy.includes(activeUserKey)
+        )}
+        hasDisliked={Boolean(
+          selectedMovie && activeUserKey && selectedMovie.dislikedBy.includes(activeUserKey)
+        )}
         personalRating={
-          selectedMovie ? prefs.personalRatings[selectedMovie.id] : undefined
+          selectedMovie ? activePersonalRatings[selectedMovie.id] : undefined
         }
         onClose={() => setSelectedMovieId(null)}
         onToggleWatchlist={handleToggleWatchlist}
@@ -498,10 +980,25 @@ export default function App() {
 
       <RecommendMovieModal
         isOpen={isRecommendOpen}
-        defaultAuthorName={prefs.userName}
-        clientId={prefs.clientId}
+        authUser={authUser}
+        authHeaders={authHeaders}
         onClose={() => setIsRecommendOpen(false)}
         onMovieCreated={handleMovieCreated}
+      />
+
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        promptReason={authPromptReason}
+        currentPalette={prefs.palette}
+        authUser={authUser}
+        watchlistCount={activeWatchlistIds.length}
+        ratingsCount={Object.keys(activePersonalRatings).length}
+        onClose={() => {
+          setIsAuthModalOpen(false);
+          setAuthPromptReason('');
+        }}
+        onAuthSuccess={handleAuthSuccess}
+        onLogout={handleLogout}
       />
     </div>
   );

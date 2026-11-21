@@ -18,11 +18,41 @@ GO
 -- 1. TABELAS
 -- ============================================================================
 
+IF OBJECT_ID('dbo.SessoesUsuarios', 'U') IS NOT NULL DROP TABLE dbo.SessoesUsuarios;
+IF OBJECT_ID('dbo.NotasPessoais', 'U') IS NOT NULL DROP TABLE dbo.NotasPessoais;
 IF OBJECT_ID('dbo.ListaPessoal', 'U') IS NOT NULL DROP TABLE dbo.ListaPessoal;
 IF OBJECT_ID('dbo.AvaliacoesFilmes', 'U') IS NOT NULL DROP TABLE dbo.AvaliacoesFilmes;
 IF OBJECT_ID('dbo.VotosFilmes', 'U') IS NOT NULL DROP TABLE dbo.VotosFilmes;
 IF OBJECT_ID('dbo.MensagensChat', 'U') IS NOT NULL DROP TABLE dbo.MensagensChat;
+IF OBJECT_ID('dbo.Usuarios', 'U') IS NOT NULL DROP TABLE dbo.Usuarios;
 IF OBJECT_ID('dbo.Filmes', 'U') IS NOT NULL DROP TABLE dbo.Filmes;
+GO
+
+CREATE TABLE dbo.Usuarios (
+    Id        INT IDENTITY(1,1) NOT NULL,
+    Nome      NVARCHAR(40)      NOT NULL,
+    Email     NVARCHAR(120)     NOT NULL,
+    SenhaHash NVARCHAR(256)     NOT NULL,
+    Paleta    NVARCHAR(20)      NOT NULL CONSTRAINT DF_Usuarios_Paleta DEFAULT (N'cinabrio'),
+    CriadoEm  DATETIME2(0)      NOT NULL CONSTRAINT DF_Usuarios_CriadoEm DEFAULT (SYSUTCDATETIME()),
+
+    CONSTRAINT PK_Usuarios PRIMARY KEY CLUSTERED (Id),
+    CONSTRAINT UQ_Usuarios_Email UNIQUE (Email)
+);
+GO
+
+CREATE TABLE dbo.SessoesUsuarios (
+    Id        INT IDENTITY(1,1) NOT NULL,
+    UsuarioId INT               NOT NULL,
+    TokenHash NVARCHAR(64)      NOT NULL,
+    CriadoEm  DATETIME2(0)      NOT NULL CONSTRAINT DF_Sessoes_CriadoEm DEFAULT (SYSUTCDATETIME()),
+    ExpiraEm  DATETIME2(0)      NOT NULL,
+
+    CONSTRAINT PK_SessoesUsuarios PRIMARY KEY CLUSTERED (Id),
+    CONSTRAINT FK_Sessoes_Usuarios FOREIGN KEY (UsuarioId)
+        REFERENCES dbo.Usuarios (Id) ON DELETE CASCADE,
+    CONSTRAINT UQ_Sessoes_TokenHash UNIQUE (TokenHash)
+);
 GO
 
 CREATE TABLE dbo.Filmes (
@@ -100,9 +130,25 @@ CREATE TABLE dbo.ListaPessoal (
 );
 GO
 
+CREATE TABLE dbo.NotasPessoais (
+    Id                   INT IDENTITY(1,1) NOT NULL,
+    IdentificadorUsuario NVARCHAR(64)      NOT NULL,
+    FilmeId              INT               NOT NULL,
+    Nota                 TINYINT           NOT NULL,
+    AtualizadoEm         DATETIME2(0)      NOT NULL CONSTRAINT DF_Notas_AtualizadoEm DEFAULT (SYSUTCDATETIME()),
+
+    CONSTRAINT PK_NotasPessoais PRIMARY KEY CLUSTERED (Id),
+    CONSTRAINT FK_Notas_Filmes FOREIGN KEY (FilmeId)
+        REFERENCES dbo.Filmes (Id) ON DELETE CASCADE,
+    CONSTRAINT CK_Notas_Valor CHECK (Nota BETWEEN 1 AND 5),
+    CONSTRAINT UQ_Notas_Usuario_Filme UNIQUE (IdentificadorUsuario, FilmeId)
+);
+GO
+
 CREATE NONCLUSTERED INDEX IX_Filmes_Genero ON dbo.Filmes (Genero);
 CREATE NONCLUSTERED INDEX IX_Avaliacoes_FilmeId ON dbo.AvaliacoesFilmes (FilmeId, Gostou);
 CREATE NONCLUSTERED INDEX IX_MensagensChat_CriadoEm ON dbo.MensagensChat (CriadoEm DESC);
+CREATE NONCLUSTERED INDEX IX_Sessoes_UsuarioId ON dbo.SessoesUsuarios (UsuarioId, ExpiraEm);
 GO
 
 -- ============================================================================

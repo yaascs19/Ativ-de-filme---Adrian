@@ -5,10 +5,12 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  handleAuthRequest,
   handleChatRequest,
   handleEvaluateMovieRequest,
   handleHealthRequest,
   handleMoviesRequest,
+  handleUserActivityRequest,
 } from './api/_lib/handlers.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -23,6 +25,14 @@ async function startServer() {
   // Rotas da API compartilhadas com as Serverless Functions da Vercel
   app.get('/api/health', async (req: Request, res: Response) => {
     await handleHealthRequest(req, res);
+  });
+
+  app.all('/api/auth/:action', async (req: Request, res: Response) => {
+    await handleAuthRequest(req, res);
+  });
+
+  app.post('/api/user/activity', async (req: Request, res: Response) => {
+    await handleUserActivityRequest(req, res);
   });
 
   app.get('/api/movies', async (req: Request, res: Response) => {

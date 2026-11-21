@@ -173,5 +173,17 @@
       "attachedMovieId": "mov-homem-aranha",
       "createdAt": 1795214862504
     }
-  ]
+  ],
+  "users": [],
+  "sessions": [],
+  "watchlists": {
+    "usr-1795266377509-4wnvs": [
+      "mov-como-eu-era"
+    ]
+  },
+  "personalRatings": {
+    "usr-1795266377509-4wnvs": {
+      "mov-como-eu-era": 5
+    }
+  }
 }
