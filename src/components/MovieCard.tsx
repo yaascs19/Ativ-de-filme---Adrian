@@ -45,6 +45,8 @@ export function MovieCard({
           <img
             src={movie.posterUrl}
             alt={`Pôster do filme ${movie.title}`}
+            loading="lazy"
+            decoding="async"
             referrerPolicy="no-referrer"
             onError={() => setImageError(true)}
             className="h-full w-full object-cover transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] group-hover:scale-[1.03]"

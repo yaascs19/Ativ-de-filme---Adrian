@@ -459,6 +459,8 @@ export function CommunityChat({
                               <img
                                 src={linkedMovie.posterUrl}
                                 alt={linkedMovie.title}
+                                loading="lazy"
+                                decoding="async"
                                 referrerPolicy="no-referrer"
                                 className="h-12 w-9 shrink-0 rounded-md object-cover bg-[#0F172A]"
                               />

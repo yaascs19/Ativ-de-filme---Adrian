@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Bookmark, Film, LogIn, Palette, Search, Star, UserCheck } from 'lucide-react';
+import { Bookmark, Film, LogIn, Palette, Search, Sparkles, Star, UserCheck } from 'lucide-react';
 import { AuthModal } from './components/AuthModal';
 import { CommunityChat } from './components/CommunityChat';
 import { Footer } from './components/Footer';
 import { Header, MobileView } from './components/Header';
 import { MovieCard } from './components/MovieCard';
 import { MovieDetailModal } from './components/MovieDetailModal';
+import { MoviePickerModal } from './components/MoviePickerModal';
 import { RecommendMovieModal } from './components/RecommendMovieModal';
 import { THEME_PALETTES } from './data/palettes';
 import { GENRES } from './data/posters';
@@ -27,6 +28,8 @@ import {
 
 type SortOption = 'recentes' | 'votos' | 'nota';
 
+const MOVIES_PAGE_SIZE = 6;
+
 export default function App() {
   const [prefs, setPrefs] = useState<PersonalPreferences>(() => loadPreferencesFromStorage());
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
@@ -41,9 +44,11 @@ export default function App() {
   const [activeView, setActiveView] = useState<MobileView>('catalogo');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortBy, setSortBy] = useState<SortOption>('recentes');
+  const [displayLimit, setDisplayLimit] = useState<number>(MOVIES_PAGE_SIZE);
 
   const [selectedMovieId, setSelectedMovieId] = useState<string | null>(null);
   const [isRecommendOpen, setIsRecommendOpen] = useState<boolean>(false);
+  const [isPickerOpen, setIsPickerOpen] = useState<boolean>(false);
   const [editingMovie, setEditingMovie] = useState<MovieItem | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [authPromptReason, setAuthPromptReason] = useState<string>('');
@@ -278,6 +283,17 @@ export default function App() {
     searchQuery,
     sortBy,
   ]);
+
+  useEffect(() => {
+    setDisplayLimit(MOVIES_PAGE_SIZE);
+  }, [activeView, prefs.activeGenre, searchQuery, sortBy]);
+
+  const paginatedMovies = useMemo(
+    () => visibleMovies.slice(0, displayLimit),
+    [visibleMovies, displayLimit]
+  );
+
+  const remainingMoviesCount = Math.max(0, visibleMovies.length - paginatedMovies.length);
 
   const averageRating = useMemo(() => {
     if (movies.length === 0) return '0.0';
@@ -977,8 +993,8 @@ export default function App() {
           >
             {/* Busca, ordenação e abas de gênero */}
             <div className="space-y-3">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <div className="relative flex-1">
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                <div className="relative min-w-[200px] flex-1">
                   <Search
                     className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--cr-ink-muted)]"
                     aria-hidden="true"
@@ -1003,6 +1019,15 @@ export default function App() {
                   <option value="votos">Mais recomendados</option>
                   <option value="nota">Maior nota</option>
                 </select>
+
+                <button
+                  type="button"
+                  onClick={() => setIsPickerOpen(true)}
+                  className="inline-flex min-h-[42px] items-center justify-center gap-1.5 rounded-xl border border-[var(--cr-border)] bg-[var(--cr-surface)] px-3.5 text-sm font-semibold text-[var(--cr-ink)] transition-colors hover:bg-[var(--cr-surface-hover)] whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <Sparkles className="h-4 w-4 text-[var(--cr-accent)]" aria-hidden="true" />
+                  <span>Me indica um filme</span>
+                </button>
 
                 <button
                   type="button"
@@ -1111,23 +1136,52 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
-                {visibleMovies.map((movie) => (
-                  <MovieCard
-                    key={movie.id}
-                    movie={movie}
-                    isSaved={activeWatchlistIds.includes(movie.id)}
-                    hasLiked={Boolean(activeUserKey && movie.likedBy.includes(activeUserKey))}
-                    hasDisliked={Boolean(
-                      activeUserKey && movie.dislikedBy.includes(activeUserKey)
+              <>
+                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                  {paginatedMovies.map((movie) => (
+                    <MovieCard
+                      key={movie.id}
+                      movie={movie}
+                      isSaved={activeWatchlistIds.includes(movie.id)}
+                      hasLiked={Boolean(activeUserKey && movie.likedBy.includes(activeUserKey))}
+                      hasDisliked={Boolean(
+                        activeUserKey && movie.dislikedBy.includes(activeUserKey)
+                      )}
+                      personalRating={activePersonalRatings[movie.id]}
+                      onToggleWatchlist={handleToggleWatchlist}
+                      onEvaluateMovie={handleEvaluateMovie}
+                      onOpenDetail={(m) => setSelectedMovieId(m.id)}
+                    />
+                  ))}
+                </div>
+
+                {visibleMovies.length > MOVIES_PAGE_SIZE && (
+                  <div className="flex flex-col items-center justify-between gap-3 rounded-2xl border border-[var(--cr-border)] bg-[var(--cr-surface)] px-4 py-3 sm:flex-row">
+                    <span className="text-xs text-[var(--cr-ink-muted)] tabular-nums">
+                      Exibindo {paginatedMovies.length} de {visibleMovies.length} filmes
+                    </span>
+
+                    {remainingMoviesCount > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setDisplayLimit((prev) => prev + MOVIES_PAGE_SIZE)}
+                        className="inline-flex min-h-[40px] items-center justify-center rounded-xl border border-[var(--cr-border)] bg-[var(--cr-surface-hover)] px-4 py-2 text-xs font-semibold text-[var(--cr-ink)] transition-colors hover:border-[var(--cr-accent-border)] hover:text-[var(--cr-accent)] whitespace-nowrap shrink-0 cursor-pointer"
+                      >
+                        Carregar mais ({Math.min(MOVIES_PAGE_SIZE, remainingMoviesCount)}{' '}
+                        {Math.min(MOVIES_PAGE_SIZE, remainingMoviesCount) === 1 ? 'filme' : 'filmes'})
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setDisplayLimit(MOVIES_PAGE_SIZE)}
+                        className="inline-flex min-h-[40px] items-center justify-center rounded-xl border border-[var(--cr-border)] bg-[var(--cr-surface)] px-4 py-2 text-xs font-semibold text-[var(--cr-ink-secondary)] transition-colors hover:text-[var(--cr-ink)] whitespace-nowrap shrink-0 cursor-pointer"
+                      >
+                        Mostrar menos
+                      </button>
                     )}
-                    personalRating={activePersonalRatings[movie.id]}
-                    onToggleWatchlist={handleToggleWatchlist}
-                    onEvaluateMovie={handleEvaluateMovie}
-                    onOpenDetail={(m) => setSelectedMovieId(m.id)}
-                  />
-                ))}
-              </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
 
@@ -1213,6 +1267,16 @@ export default function App() {
         onAuthSuccess={handleAuthSuccess}
         onProfileUpdated={handleProfileUpdated}
         onLogout={handleLogout}
+      />
+
+      <MoviePickerModal
+        isOpen={isPickerOpen}
+        movies={movies}
+        watchlistIds={activeWatchlistIds}
+        isLoggedIn={Boolean(authUser)}
+        onClose={() => setIsPickerOpen(false)}
+        onSelectMovie={(m) => setSelectedMovieId(m.id)}
+        onToggleWatchlist={handleToggleWatchlist}
       />
     </div>
   );
