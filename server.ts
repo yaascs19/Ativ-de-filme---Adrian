@@ -18,7 +18,7 @@ async function startServer() {
   const app = express();
   const server = http.createServer(app);
 
-  app.use(express.json({ limit: '64kb' }));
+  app.use(express.json({ limit: '2mb' }));
 
   // Rotas da API compartilhadas com as Serverless Functions da Vercel
   app.get('/api/health', async (req: Request, res: Response) => {

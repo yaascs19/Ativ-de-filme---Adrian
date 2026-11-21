@@ -1,5 +1,5 @@
-import { FormEvent, useEffect, useState } from 'react';
-import { Image as ImageIcon, X } from 'lucide-react';
+import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react';
+import { Image as ImageIcon, Trash2, Upload, X } from 'lucide-react';
 import { GENRES, getDefaultPosterForGenre, POSTER_PRESETS } from '../data/posters';
 import { MovieGenre, MovieItem } from '../types/cinema';
 
@@ -27,14 +27,16 @@ export function RecommendMovieModal({
   const [synopsis, setSynopsis] = useState('');
   const [recommendedBy, setRecommendedBy] = useState(defaultAuthorName);
   const [recommendationNote, setRecommendationNote] = useState('');
-  const [customPosterUrl, setCustomPosterUrl] = useState('');
-  const [customPosterInvalid, setCustomPosterInvalid] = useState(false);
+  const [uploadedPosterDataUrl, setUploadedPosterDataUrl] = useState('');
+  const [uploadedFileName, setUploadedFileName] = useState('');
+  const [processingImage, setProcessingImage] = useState(false);
   const [presetPosterUrl, setPresetPosterUrl] = useState(
     getDefaultPosterForGenre('Romance')
   );
   const [shareInChat, setShareInChat] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (isOpen && defaultAuthorName && !recommendedBy) {
@@ -53,13 +55,78 @@ export function RecommendMovieModal({
 
   if (!isOpen) return null;
 
-  const trimmedCustomUrl = customPosterUrl.trim();
-  const effectivePosterUrl =
-    trimmedCustomUrl && !customPosterInvalid ? trimmedCustomUrl : presetPosterUrl;
+  const effectivePosterUrl = uploadedPosterDataUrl || presetPosterUrl;
 
   const handleGenreChange = (nextGenre: MovieGenre) => {
     setGenre(nextGenre);
-    setPresetPosterUrl(getDefaultPosterForGenre(nextGenre));
+    if (!uploadedPosterDataUrl) {
+      setPresetPosterUrl(getDefaultPosterForGenre(nextGenre));
+    }
+  };
+
+  const handleSelectImageFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setErrorMsg('Selecione um arquivo de imagem válido (JPG, PNG ou WebP).');
+      e.target.value = '';
+      return;
+    }
+
+    setErrorMsg('');
+    setProcessingImage(true);
+    try {
+      const compressedDataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('Falha ao ler a imagem.'));
+        reader.onload = () => {
+          const img = new Image();
+          img.onerror = () => reject(new Error('Formato de imagem não suportado.'));
+          img.onload = () => {
+            const maxW = 480;
+            const maxH = 640;
+            const scale = Math.min(1, maxW / img.width, maxH / img.height);
+            const width = Math.max(1, Math.round(img.width * scale));
+            const height = Math.max(1, Math.round(img.height * scale));
+
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+              reject(new Error('Não foi possível processar a imagem.'));
+              return;
+            }
+            ctx.drawImage(img, 0, 0, width, height);
+
+            let dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+            if (dataUrl.length > 260_000) {
+              dataUrl = canvas.toDataURL('image/jpeg', 0.65);
+            }
+            resolve(dataUrl);
+          };
+          img.src = String(reader.result || '');
+        };
+        reader.readAsDataURL(file);
+      });
+
+      setUploadedPosterDataUrl(compressedDataUrl);
+      setUploadedFileName(file.name);
+    } catch {
+      setErrorMsg('Não foi possível abrir essa imagem. Tente outra foto (JPG ou PNG).');
+    } finally {
+      setProcessingImage(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleClearUploadedImage = () => {
+    setUploadedPosterDataUrl('');
+    setUploadedFileName('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   const handleSubmit = async (e: FormEvent) => {
@@ -110,8 +177,7 @@ export function RecommendMovieModal({
       setDirector('');
       setSynopsis('');
       setRecommendationNote('');
-      setCustomPosterUrl('');
-      setCustomPosterInvalid(false);
+      handleClearUploadedImage();
       onClose();
     } catch {
       setErrorMsg('Erro de conexão com o servidor ao salvar o filme.');
@@ -141,7 +207,7 @@ export function RecommendMovieModal({
               Indicar Novo Filme para o Catálogo
             </h2>
             <p className="mt-1 text-xs text-[#64748B]">
-              Cadastre qualquer filme com imagem própria ou escolha uma capa sugerida.
+              Escolha uma imagem do seu computador ou selecione uma capa pronta abaixo.
             </p>
           </div>
           <button
@@ -316,19 +382,14 @@ export function RecommendMovieModal({
             />
           </div>
 
-          {/* URL de imagem real com pré-visualização */}
+          {/* Seleção de imagem do computador com pré-visualização */}
           <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-3.5 space-y-3">
-            <div className="flex items-start gap-3">
-              <div className="h-16 w-12 shrink-0 overflow-hidden rounded-lg border border-[#CBD5E1] bg-[#0F172A] flex items-center justify-center">
+            <div className="flex items-center gap-3.5">
+              <div className="h-20 w-15 shrink-0 overflow-hidden rounded-lg border border-[#CBD5E1] bg-[#0F172A] flex items-center justify-center">
                 {effectivePosterUrl ? (
                   <img
                     src={effectivePosterUrl}
                     alt="Pré-visualização do pôster"
-                    referrerPolicy="no-referrer"
-                    onLoad={() => setCustomPosterInvalid(false)}
-                    onError={() => {
-                      if (trimmedCustomUrl) setCustomPosterInvalid(true);
-                    }}
                     className="h-full w-full object-cover"
                   />
                 ) : (
@@ -336,28 +397,56 @@ export function RecommendMovieModal({
                 )}
               </div>
 
-              <div className="min-w-0 flex-1">
-                <label
-                  htmlFor="mov-poster-url"
-                  className="block text-xs font-semibold text-[#334155]"
-                >
-                  Link da imagem do pôster (opcional)
-                </label>
+              <div className="min-w-0 flex-1 space-y-2">
+                <span className="block text-xs font-semibold text-[#334155]">
+                  Imagem do pôster do filme
+                </span>
+
                 <input
-                  id="mov-poster-url"
-                  type="url"
-                  maxLength={500}
-                  value={customPosterUrl}
-                  onChange={(e) => {
-                    setCustomPosterUrl(e.target.value);
-                    setCustomPosterInvalid(false);
-                  }}
-                  placeholder="https://exemplo.com/poster-do-filme.jpg"
-                  className="mt-1.5 w-full rounded-lg border border-[#CBD5E1] bg-white px-3 py-1.5 text-xs text-[#111827] focus:border-[#E11D48] focus:outline-none"
+                  ref={fileInputRef}
+                  id="mov-poster-file"
+                  type="file"
+                  accept="image/*"
+                  onChange={handleSelectImageFile}
+                  className="sr-only"
                 />
-                {customPosterInvalid && trimmedCustomUrl && (
-                  <p className="mt-1 text-[11px] text-[#DC2626]">
-                    Não foi possível carregar esse link. Será usada a capa selecionada abaixo.
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={processingImage}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-[#CBD5E1] bg-white px-3.5 py-2 text-xs font-semibold text-[#111827] transition-colors hover:border-[#E11D48] hover:text-[#E11D48] cursor-pointer disabled:opacity-50"
+                  >
+                    <Upload className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span>
+                      {processingImage
+                        ? 'Carregando imagem...'
+                        : uploadedPosterDataUrl
+                          ? 'Trocar imagem'
+                          : 'Abrir imagem do computador'}
+                    </span>
+                  </button>
+
+                  {uploadedPosterDataUrl && (
+                    <button
+                      type="button"
+                      onClick={handleClearUploadedImage}
+                      className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-[#E2E8F0] bg-white px-3 py-2 text-xs font-medium text-[#64748B] hover:text-[#DC2626] cursor-pointer"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>Remover</span>
+                    </button>
+                  )}
+                </div>
+
+                {uploadedFileName ? (
+                  <p className="truncate text-[11px] font-medium text-[#059669]">
+                    Arquivo selecionado: {uploadedFileName}
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-[#64748B]">
+                    Aceita JPG, PNG ou WebP direto do seu computador ou celular.
                   </p>
                 )}
               </div>
@@ -365,18 +454,17 @@ export function RecommendMovieModal({
 
             <div>
               <span className="block text-[11px] font-medium text-[#64748B]">
-                Ou escolha uma capa fotográfica pronta:
+                Ou escolha uma capa pronta:
               </span>
               <div className="mt-2 grid grid-cols-3 gap-2 sm:grid-cols-6">
                 {POSTER_PRESETS.map((preset) => {
-                  const selected = !trimmedCustomUrl && presetPosterUrl === preset.url;
+                  const selected = !uploadedPosterDataUrl && presetPosterUrl === preset.url;
                   return (
                     <button
                       key={preset.id}
                       type="button"
                       onClick={() => {
-                        setCustomPosterUrl('');
-                        setCustomPosterInvalid(false);
+                        handleClearUploadedImage();
                         setPresetPosterUrl(preset.url);
                       }}
                       className={`overflow-hidden rounded-lg border text-left transition-all cursor-pointer ${
@@ -388,7 +476,6 @@ export function RecommendMovieModal({
                       <img
                         src={preset.url}
                         alt={preset.label}
-                        referrerPolicy="no-referrer"
                         className="aspect-[3/4] w-full object-cover"
                       />
                     </button>

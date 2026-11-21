@@ -67,12 +67,21 @@ export function sanitizeText(value: unknown, maxLen: number): string {
 export function sanitizePosterUrl(value: unknown): string {
   const fallback = '/assets/aistudio/filme1_a0effce9.jpg';
   if (typeof value !== 'string') return fallback;
-  const trimmed = value.trim().slice(0, 500);
+  const trimmed = value.trim();
   if (!trimmed) return fallback;
   if (ALLOWED_POSTERS.has(trimmed)) return trimmed;
 
+  // Aceita imagem enviada do computador em Data URL (redimensionada no navegador)
+  if (/^data:image\/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$/i.test(trimmed)) {
+    if (trimmed.length <= 300_000) {
+      return trimmed;
+    }
+    return fallback;
+  }
+
+  const shortUrl = trimmed.slice(0, 500);
   try {
-    const parsed = new URL(trimmed);
+    const parsed = new URL(shortUrl);
     if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
       return parsed.toString();
     }
@@ -129,6 +138,25 @@ function parseSqlServerConfig(): {
 }
 
 let sqlPoolPromise: Promise<sql.ConnectionPool> | null = null;
+let posterColumnEnsured = false;
+
+async function ensurePosterColumnMax(pool: sql.ConnectionPool): Promise<void> {
+  if (posterColumnEnsured) return;
+  try {
+    const colRes = await pool
+      .request()
+      .query<{ ColLen: number | null }>(`SELECT COL_LENGTH('dbo.Filmes', 'PosterUrl') AS ColLen`);
+    const colLen = colRes.recordset[0]?.ColLen;
+    if (colLen !== null && colLen !== undefined && colLen !== -1) {
+      await pool
+        .request()
+        .query(`ALTER TABLE dbo.Filmes ALTER COLUMN PosterUrl NVARCHAR(MAX) NOT NULL`);
+    }
+    posterColumnEnsured = true;
+  } catch (err) {
+    console.warn('[sqlserver] Não foi possível ampliar PosterUrl automaticamente:', err);
+  }
+}
 
 async function getSqlPool(): Promise<sql.ConnectionPool> {
   if (sqlPoolPromise) {
@@ -534,6 +562,10 @@ export async function createMovie(input: CreateMovieInput): Promise<MovieRecord>
   }
 
   const pool = await getSqlPool();
+  if (input.posterUrl.startsWith('data:image/')) {
+    await ensurePosterColumnMax(pool);
+  }
+
   const insertRes = await pool
     .request()
     .input('Titulo', sql.NVarChar(100), input.title)
@@ -544,7 +576,7 @@ export async function createMovie(input: CreateMovieInput): Promise<MovieRecord>
     .input('Sinopse', sql.NVarChar(400), input.synopsis)
     .input('IndicadoPor', sql.NVarChar(40), input.recommendedBy)
     .input('MotivoIndicacao', sql.NVarChar(240), input.recommendationNote)
-    .input('PosterUrl', sql.NVarChar(500), input.posterUrl)
+    .input('PosterUrl', sql.NVarChar(sql.MAX), input.posterUrl)
     .input('NotaMedia', sql.Decimal(2, 1), input.rating)
     .query<SqlMovieRow>(`
       INSERT INTO dbo.Filmes (

@@ -35,7 +35,7 @@ CREATE TABLE dbo.Filmes (
     Sinopse         NVARCHAR(400)     NOT NULL,
     IndicadoPor     NVARCHAR(40)      NOT NULL,
     MotivoIndicacao NVARCHAR(240)     NOT NULL,
-    PosterUrl       NVARCHAR(500)     NOT NULL,
+    PosterUrl       NVARCHAR(MAX)     NOT NULL,
     NotaMedia       DECIMAL(2,1)      NOT NULL CONSTRAINT DF_Filmes_Nota DEFAULT (4.5),
     CriadoEm        DATETIME2(0)      NOT NULL CONSTRAINT DF_Filmes_CriadoEm DEFAULT (SYSUTCDATETIME()),
 
