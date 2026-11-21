@@ -18,6 +18,7 @@ GO
 -- 1. TABELAS
 -- ============================================================================
 
+IF OBJECT_ID('dbo.ComentariosFilmes', 'U') IS NOT NULL DROP TABLE dbo.ComentariosFilmes;
 IF OBJECT_ID('dbo.SessoesUsuarios', 'U') IS NOT NULL DROP TABLE dbo.SessoesUsuarios;
 IF OBJECT_ID('dbo.NotasPessoais', 'U') IS NOT NULL DROP TABLE dbo.NotasPessoais;
 IF OBJECT_ID('dbo.ListaPessoal', 'U') IS NOT NULL DROP TABLE dbo.ListaPessoal;
@@ -56,18 +57,20 @@ CREATE TABLE dbo.SessoesUsuarios (
 GO
 
 CREATE TABLE dbo.Filmes (
-    Id              INT IDENTITY(1,1) NOT NULL,
-    Titulo          NVARCHAR(100)     NOT NULL,
-    Diretor         NVARCHAR(80)      NOT NULL,
-    AnoLancamento   INT               NOT NULL,
-    DuracaoMinutos  INT               NOT NULL CONSTRAINT DF_Filmes_Duracao DEFAULT (110),
-    Genero          NVARCHAR(40)      NOT NULL,
-    Sinopse         NVARCHAR(400)     NOT NULL,
-    IndicadoPor     NVARCHAR(40)      NOT NULL,
-    MotivoIndicacao NVARCHAR(240)     NOT NULL,
-    PosterUrl       NVARCHAR(MAX)     NOT NULL,
-    NotaMedia       DECIMAL(2,1)      NOT NULL CONSTRAINT DF_Filmes_Nota DEFAULT (4.5),
-    CriadoEm        DATETIME2(0)      NOT NULL CONSTRAINT DF_Filmes_CriadoEm DEFAULT (SYSUTCDATETIME()),
+    Id                  INT IDENTITY(1,1) NOT NULL,
+    Titulo              NVARCHAR(100)     NOT NULL,
+    Diretor             NVARCHAR(80)      NOT NULL,
+    AnoLancamento       INT               NOT NULL,
+    DuracaoMinutos      INT               NOT NULL CONSTRAINT DF_Filmes_Duracao DEFAULT (110),
+    Genero              NVARCHAR(40)      NOT NULL,
+    Sinopse             NVARCHAR(400)     NOT NULL,
+    IndicadoPor         NVARCHAR(40)      NOT NULL,
+    CriadoPorUsuarioKey NVARCHAR(64)      NULL,
+    MotivoIndicacao     NVARCHAR(240)     NOT NULL,
+    PosterUrl           NVARCHAR(MAX)     NOT NULL,
+    NotaMedia           DECIMAL(2,1)      NOT NULL CONSTRAINT DF_Filmes_Nota DEFAULT (4.5),
+    NotaAutor           DECIMAL(2,1)      NULL,
+    CriadoEm            DATETIME2(0)      NOT NULL CONSTRAINT DF_Filmes_CriadoEm DEFAULT (SYSUTCDATETIME()),
 
     CONSTRAINT PK_Filmes PRIMARY KEY CLUSTERED (Id),
     CONSTRAINT CK_Filmes_Ano CHECK (AnoLancamento BETWEEN 1900 AND 2030),
@@ -105,11 +108,12 @@ CREATE TABLE dbo.AvaliacoesFilmes (
 GO
 
 CREATE TABLE dbo.MensagensChat (
-    Id             INT IDENTITY(1,1) NOT NULL,
-    Autor          NVARCHAR(40)      NOT NULL,
-    Texto          NVARCHAR(400)     NOT NULL,
-    FilmeAnexadoId INT               NULL,
-    CriadoEm       DATETIME2(0)      NOT NULL CONSTRAINT DF_Chat_CriadoEm DEFAULT (SYSUTCDATETIME()),
+    Id                   INT IDENTITY(1,1) NOT NULL,
+    IdentificadorUsuario NVARCHAR(64)      NULL,
+    Autor                NVARCHAR(40)      NOT NULL,
+    Texto                NVARCHAR(400)     NOT NULL,
+    FilmeAnexadoId       INT               NULL,
+    CriadoEm             DATETIME2(0)      NOT NULL CONSTRAINT DF_Chat_CriadoEm DEFAULT (SYSUTCDATETIME()),
 
     CONSTRAINT PK_MensagensChat PRIMARY KEY CLUSTERED (Id),
     CONSTRAINT FK_Chat_Filmes FOREIGN KEY (FilmeAnexadoId)
@@ -142,6 +146,20 @@ CREATE TABLE dbo.NotasPessoais (
         REFERENCES dbo.Filmes (Id) ON DELETE CASCADE,
     CONSTRAINT CK_Notas_Valor CHECK (Nota BETWEEN 1 AND 5),
     CONSTRAINT UQ_Notas_Usuario_Filme UNIQUE (IdentificadorUsuario, FilmeId)
+);
+GO
+
+CREATE TABLE dbo.ComentariosFilmes (
+    Id                   INT IDENTITY(1,1) NOT NULL,
+    FilmeId              INT               NOT NULL,
+    IdentificadorUsuario NVARCHAR(64)      NOT NULL,
+    Autor                NVARCHAR(40)      NOT NULL,
+    Texto                NVARCHAR(240)     NOT NULL,
+    CriadoEm             DATETIME2(0)      NOT NULL CONSTRAINT DF_Comentarios_CriadoEm DEFAULT (SYSUTCDATETIME()),
+
+    CONSTRAINT PK_ComentariosFilmes PRIMARY KEY CLUSTERED (Id),
+    CONSTRAINT FK_Comentarios_Filmes FOREIGN KEY (FilmeId)
+        REFERENCES dbo.Filmes (Id) ON DELETE CASCADE
 );
 GO
 

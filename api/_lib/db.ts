@@ -22,6 +22,15 @@ export const VALID_PALETTES: ThemePaletteId[] = [
   'noturno',
 ];
 
+export interface MovieCommentRecord {
+  id: string;
+  movieId: string;
+  userKey: string;
+  author: string;
+  text: string;
+  createdAt: number;
+}
+
 export interface MovieRecord {
   id: string;
   title: string;
@@ -31,17 +40,21 @@ export interface MovieRecord {
   genre: MovieGenre;
   synopsis: string;
   recommendedBy: string;
+  ownerUserKey?: string;
   recommendationNote: string;
   posterUrl: string;
   rating: number;
   authorRating?: number;
+  ratingsCount: number;
   likedBy: string[];
   dislikedBy: string[];
+  comments: MovieCommentRecord[];
   createdAt: number;
 }
 
 export interface ChatMessageRecord {
   id: string;
+  userKey?: string;
   author: string;
   text: string;
   attachedMovieId?: string;
@@ -85,6 +98,7 @@ interface LocalDatabaseSchema {
   sessions: LocalSessionRecord[];
   watchlists: Record<string, string[]>;
   personalRatings: Record<string, Record<string, number>>;
+  comments: MovieCommentRecord[];
 }
 
 export const VALID_GENRES: MovieGenre[] = [
@@ -111,6 +125,15 @@ export function sanitizeText(value: unknown, maxLen: number): string {
   return value.trim().replace(/\s+/g, ' ').slice(0, maxLen);
 }
 
+export function normalizeTitleKey(title: string): string {
+  return title
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
 export function sanitizeEmail(value: unknown): string {
   if (typeof value !== 'string') return '';
   return value.trim().toLowerCase().slice(0, 120);
@@ -133,7 +156,6 @@ export function sanitizePosterUrl(value: unknown): string {
   if (!trimmed) return fallback;
   if (ALLOWED_POSTERS.has(trimmed)) return trimmed;
 
-  // Aceita imagem enviada do computador em Data URL (redimensionada no navegador)
   if (/^data:image\/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$/i.test(trimmed)) {
     if (trimmed.length <= 300_000) {
       return trimmed;
@@ -210,7 +232,6 @@ function parseSqlServerConfig(): {
 
   let parsedPort = Number((process.env.SQLSERVER_PORT || '').trim()) || 1433;
 
-  // Suporta formato "servidor.mssql.somee.com,1433" ou "servidor:1433"
   const commaMatch = rawServer.match(/^([^,]+),(\d+)$/);
   if (commaMatch) {
     rawServer = commaMatch[1].trim();
@@ -317,9 +338,34 @@ async function ensureAuthSchema(pool: sql.ConnectionPool): Promise<void> {
       );
     END;
 
+    IF OBJECT_ID('dbo.ComentariosFilmes', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.ComentariosFilmes (
+        Id                   INT IDENTITY(1,1) NOT NULL,
+        FilmeId              INT               NOT NULL,
+        IdentificadorUsuario NVARCHAR(64)      NOT NULL,
+        Autor                NVARCHAR(40)      NOT NULL,
+        Texto                NVARCHAR(240)     NOT NULL,
+        CriadoEm             DATETIME2(0)      NOT NULL CONSTRAINT DF_Comentarios_CriadoEm DEFAULT (SYSUTCDATETIME()),
+        CONSTRAINT PK_ComentariosFilmes PRIMARY KEY CLUSTERED (Id),
+        CONSTRAINT FK_Comentarios_Filmes FOREIGN KEY (FilmeId)
+          REFERENCES dbo.Filmes (Id) ON DELETE CASCADE
+      );
+    END;
+
     IF COL_LENGTH('dbo.Filmes', 'NotaAutor') IS NULL
     BEGIN
       ALTER TABLE dbo.Filmes ADD NotaAutor DECIMAL(2,1) NULL;
+    END;
+
+    IF COL_LENGTH('dbo.Filmes', 'CriadoPorUsuarioKey') IS NULL
+    BEGIN
+      ALTER TABLE dbo.Filmes ADD CriadoPorUsuarioKey NVARCHAR(64) NULL;
+    END;
+
+    IF COL_LENGTH('dbo.MensagensChat', 'IdentificadorUsuario') IS NULL
+    BEGIN
+      ALTER TABLE dbo.MensagensChat ADD IdentificadorUsuario NVARCHAR(64) NULL;
     END;
   `);
 
@@ -415,8 +461,11 @@ function createSeedDatabase(): LocalDatabaseSchema {
           'Prepare o lenço! Romance emocionante com química incrível entre os protagonistas.',
         posterUrl: '/assets/aistudio/filme1_a0effce9.jpg',
         rating: 4.8,
+        authorRating: 4.8,
+        ratingsCount: 1,
         likedBy: ['seed-1', 'seed-2', 'seed-3', 'seed-4'],
         dislikedBy: [],
+        comments: [],
         createdAt: now - 1000 * 60 * 180,
       },
       {
@@ -433,8 +482,11 @@ function createSeedDatabase(): LocalDatabaseSchema {
           'Animação poética que mistura CGI e stop-motion, perfeita para qualquer idade.',
         posterUrl: '/assets/aistudio/filme2_ba15de3e.jpg',
         rating: 4.9,
+        authorRating: 4.9,
+        ratingsCount: 1,
         likedBy: ['seed-1', 'seed-2', 'seed-5'],
         dislikedBy: [],
+        comments: [],
         createdAt: now - 1000 * 60 * 150,
       },
       {
@@ -451,8 +503,11 @@ function createSeedDatabase(): LocalDatabaseSchema {
           'Ação eletrizante, clima urbano clássico do herói e ótimo gancho dramático.',
         posterUrl: '/assets/aistudio/filme3_f5e4cc7c.jpg',
         rating: 4.7,
+        authorRating: 4.7,
+        ratingsCount: 1,
         likedBy: ['seed-2', 'seed-3', 'seed-4'],
         dislikedBy: [],
+        comments: [],
         createdAt: now - 1000 * 60 * 120,
       },
       {
@@ -469,8 +524,11 @@ function createSeedDatabase(): LocalDatabaseSchema {
           'Divertido do início ao fim e com uma trilha sonora cheia de sucessos.',
         posterUrl: '/assets/aistudio/filme4_7f9fb5f4.jpg',
         rating: 4.6,
+        authorRating: 4.6,
+        ratingsCount: 1,
         likedBy: ['seed-1', 'seed-3', 'seed-5'],
         dislikedBy: ['seed-6'],
+        comments: [],
         createdAt: now - 1000 * 60 * 90,
       },
       {
@@ -487,8 +545,11 @@ function createSeedDatabase(): LocalDatabaseSchema {
           'Cenários grandiosos, vocais impressionantes e figurinos impecáveis.',
         posterUrl: '/assets/aistudio/filme8_195fa374.jpg',
         rating: 4.8,
+        authorRating: 4.8,
+        ratingsCount: 1,
         likedBy: ['seed-1', 'seed-4', 'seed-6'],
         dislikedBy: [],
+        comments: [],
         createdAt: now - 1000 * 60 * 60,
       },
       {
@@ -505,8 +566,11 @@ function createSeedDatabase(): LocalDatabaseSchema {
           'Comédia nacional leve e certeira para dar boas risadas em grupo.',
         posterUrl: '/assets/aistudio/filme6_6b1c72a1.jpg',
         rating: 4.5,
+        authorRating: 4.5,
+        ratingsCount: 1,
         likedBy: ['seed-2', 'seed-5'],
         dislikedBy: [],
+        comments: [],
         createdAt: now - 1000 * 60 * 30,
       },
     ],
@@ -537,6 +601,32 @@ function createSeedDatabase(): LocalDatabaseSchema {
     sessions: [],
     watchlists: {},
     personalRatings: {},
+    comments: [],
+  };
+}
+
+function enrichLocalMovie(
+  movie: MovieRecord,
+  personalRatings: Record<string, Record<string, number>>,
+  comments: MovieCommentRecord[]
+): MovieRecord {
+  const otherUserRatings = Object.entries(personalRatings)
+    .filter(([uKey]) => uKey !== movie.ownerUserKey)
+    .map(([, map]) => map[movie.id])
+    .filter((v): v is number => typeof v === 'number' && v >= 1 && v <= 5);
+
+  const baseAuthorRating = movie.authorRating ?? movie.rating;
+  const sum = baseAuthorRating + otherUserRatings.reduce((acc, n) => acc + n, 0);
+  const count = 1 + otherUserRatings.length;
+
+  return {
+    ...movie,
+    authorRating: baseAuthorRating,
+    rating: Math.round((sum / count) * 10) / 10,
+    ratingsCount: count,
+    likedBy: Array.isArray(movie.likedBy) ? movie.likedBy : [],
+    dislikedBy: Array.isArray(movie.dislikedBy) ? movie.dislikedBy : [],
+    comments: comments.filter((c) => c.movieId === movie.id),
   };
 }
 
@@ -557,21 +647,21 @@ function loadLocalDb(): LocalDatabaseSchema {
       saveLocalDb(seed);
       return seed;
     }
+    const personalRatings =
+      parsed.personalRatings && typeof parsed.personalRatings === 'object'
+        ? parsed.personalRatings
+        : {};
+    const comments = Array.isArray(parsed.comments) ? parsed.comments : [];
+
     return {
-      movies: parsed.movies.map((m) => ({
-        ...m,
-        likedBy: Array.isArray(m.likedBy) ? m.likedBy : [],
-        dislikedBy: Array.isArray(m.dislikedBy) ? m.dislikedBy : [],
-      })),
+      movies: parsed.movies.map((m) => enrichLocalMovie(m, personalRatings, comments)),
       messages: parsed.messages,
       users: Array.isArray(parsed.users) ? parsed.users : [],
       sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
       watchlists:
         parsed.watchlists && typeof parsed.watchlists === 'object' ? parsed.watchlists : {},
-      personalRatings:
-        parsed.personalRatings && typeof parsed.personalRatings === 'object'
-          ? parsed.personalRatings
-          : {},
+      personalRatings,
+      comments,
     };
   } catch {
     return createSeedDatabase();
@@ -600,6 +690,7 @@ interface SqlMovieRow {
   Genero: MovieGenre;
   Sinopse: string;
   IndicadoPor: string;
+  CriadoPorUsuarioKey?: string | null;
   MotivoIndicacao: string;
   PosterUrl: string;
   NotaMedia: number;
@@ -613,8 +704,24 @@ interface SqlEvalRow {
   Gostou: boolean;
 }
 
+interface SqlNoteRow {
+  FilmeId: number;
+  IdentificadorUsuario: string;
+  Nota: number;
+}
+
+interface SqlCommentRow {
+  Id: number;
+  FilmeId: number;
+  IdentificadorUsuario: string;
+  Autor: string;
+  Texto: string;
+  CriadoEm: Date;
+}
+
 interface SqlChatRow {
   Id: number;
+  IdentificadorUsuario?: string | null;
   Autor: string;
   Texto: string;
   FilmeAnexadoId: number | null;
@@ -630,9 +737,16 @@ interface SqlUserRow {
   CriadoEm: Date;
 }
 
-function mapSqlMovies(movieRows: SqlMovieRow[], evalRows: SqlEvalRow[]): MovieRecord[] {
+function mapSqlMovies(
+  movieRows: SqlMovieRow[],
+  evalRows: SqlEvalRow[],
+  noteRows: SqlNoteRow[] = [],
+  commentRows: SqlCommentRow[] = []
+): MovieRecord[] {
   const likesMap = new Map<number, string[]>();
   const dislikesMap = new Map<number, string[]>();
+  const notesMap = new Map<number, SqlNoteRow[]>();
+  const commentsMap = new Map<number, MovieCommentRecord[]>();
 
   for (const ev of evalRows) {
     if (ev.Gostou) {
@@ -641,27 +755,61 @@ function mapSqlMovies(movieRows: SqlMovieRow[], evalRows: SqlEvalRow[]): MovieRe
       likesMap.set(ev.FilmeId, list);
     } else {
       const list = dislikesMap.get(ev.FilmeId) ?? [];
-      list.push(ev.IdentificadorUsuario);
+      list.push(ev.FilmeId ? ev.IdentificadorUsuario : ev.IdentificadorUsuario);
       dislikesMap.set(ev.FilmeId, list);
     }
   }
 
-  return movieRows.map((row) => ({
-    id: String(row.Id),
-    title: row.Titulo,
-    director: row.Diretor,
-    year: row.AnoLancamento,
-    durationMinutes: row.DuracaoMinutos,
-    genre: row.Genero,
-    synopsis: row.Sinopse,
-    recommendedBy: row.IndicadoPor,
-    recommendationNote: row.MotivoIndicacao,
-    posterUrl: row.PosterUrl,
-    rating: Number(row.NotaMedia),
-    likedBy: likesMap.get(row.Id) ?? [],
-    dislikedBy: dislikesMap.get(row.Id) ?? [],
-    createdAt: new Date(row.CriadoEm).getTime(),
-  }));
+  for (const note of noteRows) {
+    const list = notesMap.get(note.FilmeId) ?? [];
+    list.push(note);
+    notesMap.set(note.FilmeId, list);
+  }
+
+  for (const c of commentRows) {
+    const list = commentsMap.get(c.FilmeId) ?? [];
+    list.push({
+      id: String(c.Id),
+      movieId: String(c.FilmeId),
+      userKey: c.IdentificadorUsuario,
+      author: c.Autor,
+      text: c.Texto,
+      createdAt: new Date(c.CriadoEm).getTime(),
+    });
+    commentsMap.set(c.FilmeId, list);
+  }
+
+  return movieRows.map((row) => {
+    const ownerKey = row.CriadoPorUsuarioKey || undefined;
+    const otherNotes = (notesMap.get(row.Id) ?? []).filter(
+      (n) => !ownerKey || n.IdentificadorUsuario !== ownerKey
+    );
+    const ratingsCount = 1 + otherNotes.length;
+
+    return {
+      id: String(row.Id),
+      title: row.Titulo,
+      director: row.Diretor,
+      year: row.AnoLancamento,
+      durationMinutes: row.DuracaoMinutos,
+      genre: row.Genero,
+      synopsis: row.Sinopse,
+      recommendedBy: row.IndicadoPor,
+      ownerUserKey: ownerKey,
+      recommendationNote: row.MotivoIndicacao,
+      posterUrl: row.PosterUrl,
+      rating: Number(row.NotaMedia),
+      authorRating:
+        row.NotaAutor !== null && row.NotaAutor !== undefined
+          ? Number(row.NotaAutor)
+          : Number(row.NotaMedia),
+      ratingsCount,
+      likedBy: likesMap.get(row.Id) ?? [],
+      dislikedBy: dislikesMap.get(row.Id) ?? [],
+      comments: commentsMap.get(row.Id) ?? [],
+      createdAt: new Date(row.CriadoEm).getTime(),
+    };
+  });
 }
 
 function toUserKey(userId: string | number): string {
@@ -674,7 +822,7 @@ async function loadSqlUserActivity(
   userKey: string,
   palette: ThemePaletteId
 ): Promise<UserActivityRecord> {
-  const [watchlistRes, ratingsRes] = await Promise.all([
+  const [watchlistRes, ratingsRes, authoredRes] = await Promise.all([
     pool
       .request()
       .input('Usuario', sql.NVarChar(64), userKey)
@@ -692,11 +840,22 @@ async function loadSqlUserActivity(
         FROM dbo.NotasPessoais
         WHERE IdentificadorUsuario = @Usuario
       `),
+    pool
+      .request()
+      .input('Usuario', sql.NVarChar(64), userKey)
+      .query<{ Id: number; NotaAutor: number | null; NotaMedia: number }>(`
+        SELECT Id, NotaAutor, NotaMedia
+        FROM dbo.Filmes
+        WHERE CriadoPorUsuarioKey = @Usuario
+      `),
   ]);
 
   const personalRatings: Record<string, number> = {};
   for (const row of ratingsRes.recordset) {
     personalRatings[String(row.FilmeId)] = Number(row.Nota);
+  }
+  for (const row of authoredRes.recordset) {
+    personalRatings[String(row.Id)] = Math.round(Number(row.NotaAutor ?? row.NotaMedia));
   }
 
   return {
@@ -706,8 +865,21 @@ async function loadSqlUserActivity(
   };
 }
 
+function loadLocalUserPersonalRatings(
+  db: LocalDatabaseSchema,
+  userKey: string
+): Record<string, number> {
+  const base = { ...(db.personalRatings[userKey] ?? {}) };
+  for (const m of db.movies) {
+    if (m.ownerUserKey === userKey) {
+      base[m.id] = Math.round(m.authorRating ?? m.rating);
+    }
+  }
+  return base;
+}
+
 // ---------------------------------------------------------------------------
-// Autenticação e atividade por conta
+// Autenticação, perfil e atividade por conta
 // ---------------------------------------------------------------------------
 
 export async function registerUserAccount(input: {
@@ -867,7 +1039,7 @@ export async function loginUserAccount(input: {
       },
       activity: {
         watchlistIds: db.watchlists[user.id] ?? [],
-        personalRatings: db.personalRatings[user.id] ?? {},
+        personalRatings: loadLocalUserPersonalRatings(db, user.id),
         palette: sanitizePalette(user.palette),
       },
       sessionToken: rawToken,
@@ -947,7 +1119,7 @@ export async function getSessionUser(rawToken: string): Promise<{
       },
       activity: {
         watchlistIds: db.watchlists[user.id] ?? [],
-        personalRatings: db.personalRatings[user.id] ?? {},
+        personalRatings: loadLocalUserPersonalRatings(db, user.id),
         palette: sanitizePalette(user.palette),
       },
     };
@@ -981,6 +1153,115 @@ export async function getSessionUser(rawToken: string): Promise<{
       createdAt: new Date(row.CriadoEm).getTime(),
     },
     activity,
+  };
+}
+
+export async function updateUserProfile(input: {
+  userId: string;
+  userKey: string;
+  name?: string;
+  currentPassword?: string;
+  newPassword?: string;
+}): Promise<
+  | { ok: true; user: AuthUserRecord }
+  | { ok: false; code: 'INVALID_CURRENT_PASSWORD' | 'NOT_FOUND' }
+> {
+  if (!isSqlServerConfigured()) {
+    const db = loadLocalDb();
+    const user = db.users.find((u) => u.id === input.userId);
+    if (!user) return { ok: false, code: 'NOT_FOUND' };
+
+    if (input.newPassword) {
+      if (!input.currentPassword || !verifyPassword(input.currentPassword, user.passwordHash)) {
+        return { ok: false, code: 'INVALID_CURRENT_PASSWORD' };
+      }
+      user.passwordHash = hashPassword(input.newPassword);
+    }
+
+    if (input.name && input.name !== user.name) {
+      user.name = input.name;
+      for (const m of db.movies) {
+        if (m.ownerUserKey === input.userKey) m.recommendedBy = input.name;
+      }
+      for (const msg of db.messages) {
+        if (msg.userKey === input.userKey) msg.author = input.name;
+      }
+      for (const c of db.comments) {
+        if (c.userKey === input.userKey) c.author = input.name;
+      }
+    }
+
+    saveLocalDb(db);
+    return {
+      ok: true,
+      user: {
+        id: user.id,
+        userKey: user.id,
+        name: user.name,
+        email: user.email,
+        createdAt: user.createdAt,
+      },
+    };
+  }
+
+  const numericId = Number(input.userId);
+  if (!Number.isInteger(numericId) || numericId <= 0) {
+    return { ok: false, code: 'NOT_FOUND' };
+  }
+
+  const pool = await getSqlPool();
+  await ensureAuthSchema(pool);
+
+  const userRes = await pool
+    .request()
+    .input('Id', sql.Int, numericId)
+    .query<SqlUserRow>(`SELECT * FROM dbo.Usuarios WHERE Id = @Id`);
+  const row = userRes.recordset[0];
+  if (!row) return { ok: false, code: 'NOT_FOUND' };
+
+  let nextHash = row.SenhaHash;
+  if (input.newPassword) {
+    if (!input.currentPassword || !verifyPassword(input.currentPassword, row.SenhaHash)) {
+      return { ok: false, code: 'INVALID_CURRENT_PASSWORD' };
+    }
+    nextHash = hashPassword(input.newPassword);
+  }
+
+  const nextName = input.name || row.Nome;
+  const updatedRes = await pool
+    .request()
+    .input('Id', sql.Int, numericId)
+    .input('Nome', sql.NVarChar(40), nextName)
+    .input('SenhaHash', sql.NVarChar(256), nextHash)
+    .query<SqlUserRow>(`
+      UPDATE dbo.Usuarios
+      SET Nome = @Nome, SenhaHash = @SenhaHash
+      OUTPUT INSERTED.*
+      WHERE Id = @Id
+    `);
+
+  if (nextName !== row.Nome) {
+    await pool
+      .request()
+      .input('Nome', sql.NVarChar(40), nextName)
+      .input('Usuario', sql.NVarChar(64), input.userKey)
+      .query(`
+        UPDATE dbo.Filmes SET IndicadoPor = @Nome WHERE CriadoPorUsuarioKey = @Usuario;
+        UPDATE dbo.MensagensChat SET Autor = @Nome WHERE IdentificadorUsuario = @Usuario;
+        UPDATE dbo.ComentariosFilmes SET Autor = @Nome WHERE IdentificadorUsuario = @Usuario;
+      `);
+  }
+
+  const updated = updatedRes.recordset[0] ?? row;
+  return {
+    ok: true,
+    user: {
+      id: String(updated.Id),
+      userKey: input.userKey,
+      name: updated.Nome,
+      email: updated.Email,
+      createdAt: new Date(updated.CriadoEm).getTime(),
+    },
   };
 }
 
@@ -1077,43 +1358,77 @@ export async function toggleUserWatchlist(
 export async function saveUserMovieRating(
   userKey: string,
   movieId: string,
-  rating: number
-): Promise<{ personalRatings: Record<string, number>; movie: MovieRecord } | null> {
-  const safeRating = Math.round(rating);
-  if (!Number.isInteger(safeRating) || safeRating < 1 || safeRating > 5) return null;
+  rating: number | null
+): Promise<
+  | { ok: true; personalRatings: Record<string, number>; movie: MovieRecord }
+  | { ok: false; code: 'NOT_FOUND' | 'AUTHOR_RATING_REQUIRED' }
+> {
+  if (rating !== null) {
+    const safeRating = Math.round(rating);
+    if (!Number.isInteger(safeRating) || safeRating < 1 || safeRating > 5) {
+      return { ok: false, code: 'NOT_FOUND' };
+    }
+    rating = safeRating;
+  }
 
   if (!isSqlServerConfigured()) {
     const db = loadLocalDb();
     const movieIndex = db.movies.findIndex((m) => m.id === movieId);
-    if (movieIndex === -1) return null;
-
-    const current = db.personalRatings[userKey] ?? {};
-    const nextRatings = { ...current, [movieId]: safeRating };
-    db.personalRatings[userKey] = nextRatings;
+    if (movieIndex === -1) return { ok: false, code: 'NOT_FOUND' };
 
     const targetMovie = db.movies[movieIndex];
-    const baseAuthorRating = targetMovie.authorRating ?? targetMovie.rating;
-    const allUserRatings = Object.values(db.personalRatings)
-      .map((map) => map[movieId])
-      .filter((val): val is number => typeof val === 'number' && val >= 1 && val <= 5);
+    const isAuthor = targetMovie.ownerUserKey === userKey;
 
-    const totalSum =
-      baseAuthorRating + allUserRatings.reduce((acc, item) => acc + item, 0);
-    const updatedAverage = Math.round((totalSum / (1 + allUserRatings.length)) * 10) / 10;
+    if (isAuthor && rating === null) {
+      return { ok: false, code: 'AUTHOR_RATING_REQUIRED' };
+    }
 
-    const updatedMovie: MovieRecord = {
+    let nextAuthorRating = targetMovie.authorRating ?? targetMovie.rating;
+    const currentMap = { ...(db.personalRatings[userKey] ?? {}) };
+
+    if (isAuthor && rating !== null) {
+      nextAuthorRating = rating;
+      delete currentMap[movieId];
+      db.personalRatings[userKey] = currentMap;
+    } else if (rating === null) {
+      delete currentMap[movieId];
+      db.personalRatings[userKey] = currentMap;
+    } else {
+      currentMap[movieId] = rating;
+      db.personalRatings[userKey] = currentMap;
+    }
+
+    // Evita contradição entre estrelas altas/baixas e Gostei/Não gostei
+    let nextLikedBy = [...targetMovie.likedBy];
+    let nextDislikedBy = [...targetMovie.dislikedBy];
+    if (rating !== null && rating >= 4) {
+      nextDislikedBy = nextDislikedBy.filter((id) => id !== userKey);
+    } else if (rating !== null && rating <= 2) {
+      nextLikedBy = nextLikedBy.filter((id) => id !== userKey);
+    }
+
+    const updatedRaw: MovieRecord = {
       ...targetMovie,
-      authorRating: baseAuthorRating,
-      rating: updatedAverage,
+      authorRating: nextAuthorRating,
+      likedBy: nextLikedBy,
+      dislikedBy: nextDislikedBy,
     };
-    db.movies[movieIndex] = updatedMovie;
 
+    const enriched = enrichLocalMovie(updatedRaw, db.personalRatings, db.comments);
+    db.movies[movieIndex] = enriched;
     saveLocalDb(db);
-    return { personalRatings: nextRatings, movie: updatedMovie };
+
+    return {
+      ok: true,
+      personalRatings: loadLocalUserPersonalRatings(db, userKey),
+      movie: enriched,
+    };
   }
 
   const numericMovieId = Number(movieId);
-  if (!Number.isInteger(numericMovieId) || numericMovieId <= 0) return null;
+  if (!Number.isInteger(numericMovieId) || numericMovieId <= 0) {
+    return { ok: false, code: 'NOT_FOUND' };
+  }
 
   const pool = await getSqlPool();
   await ensureAuthSchema(pool);
@@ -1123,53 +1438,96 @@ export async function saveUserMovieRating(
     .input('FilmeId', sql.Int, numericMovieId)
     .query<SqlMovieRow>(`SELECT * FROM dbo.Filmes WHERE Id = @FilmeId`);
   const targetMovie = movieRes.recordset[0];
-  if (!targetMovie) return null;
+  if (!targetMovie) return { ok: false, code: 'NOT_FOUND' };
 
-  const existing = await pool
-    .request()
-    .input('Usuario', sql.NVarChar(64), userKey)
-    .input('FilmeId', sql.Int, numericMovieId)
-    .query<{ Id: number }>(`
-      SELECT Id FROM dbo.NotasPessoais
-      WHERE IdentificadorUsuario = @Usuario AND FilmeId = @FilmeId
-    `);
+  const isAuthor = targetMovie.CriadoPorUsuarioKey === userKey;
+  if (isAuthor && rating === null) {
+    return { ok: false, code: 'AUTHOR_RATING_REQUIRED' };
+  }
 
-  if (existing.recordset[0]) {
+  let nextAuthorRating = Number(targetMovie.NotaAutor ?? targetMovie.NotaMedia);
+
+  if (isAuthor && rating !== null) {
+    nextAuthorRating = rating;
+    // Remove eventual registro duplicado em NotasPessoais para o autor
     await pool
       .request()
       .input('Usuario', sql.NVarChar(64), userKey)
       .input('FilmeId', sql.Int, numericMovieId)
-      .input('Nota', sql.TinyInt, safeRating)
       .query(`
-        UPDATE dbo.NotasPessoais
-        SET Nota = @Nota, AtualizadoEm = SYSUTCDATETIME()
+        DELETE FROM dbo.NotasPessoais
+        WHERE IdentificadorUsuario = @Usuario AND FilmeId = @FilmeId
+      `);
+  } else if (rating === null) {
+    await pool
+      .request()
+      .input('Usuario', sql.NVarChar(64), userKey)
+      .input('FilmeId', sql.Int, numericMovieId)
+      .query(`
+        DELETE FROM dbo.NotasPessoais
         WHERE IdentificadorUsuario = @Usuario AND FilmeId = @FilmeId
       `);
   } else {
+    const existing = await pool
+      .request()
+      .input('Usuario', sql.NVarChar(64), userKey)
+      .input('FilmeId', sql.Int, numericMovieId)
+      .query<{ Id: number }>(`
+        SELECT Id FROM dbo.NotasPessoais
+        WHERE IdentificadorUsuario = @Usuario AND FilmeId = @FilmeId
+      `);
+
+    if (existing.recordset[0]) {
+      await pool
+        .request()
+        .input('Usuario', sql.NVarChar(64), userKey)
+        .input('FilmeId', sql.Int, numericMovieId)
+        .input('Nota', sql.TinyInt, rating)
+        .query(`
+          UPDATE dbo.NotasPessoais
+          SET Nota = @Nota, AtualizadoEm = SYSUTCDATETIME()
+          WHERE IdentificadorUsuario = @Usuario AND FilmeId = @FilmeId
+        `);
+    } else {
+      await pool
+        .request()
+        .input('Usuario', sql.NVarChar(64), userKey)
+        .input('FilmeId', sql.Int, numericMovieId)
+        .input('Nota', sql.TinyInt, rating)
+        .query(`
+          INSERT INTO dbo.NotasPessoais (IdentificadorUsuario, FilmeId, Nota)
+          VALUES (@Usuario, @FilmeId, @Nota)
+        `);
+    }
+  }
+
+  // Evita contradição entre estrelas e Gostei / Não gostei
+  if (rating !== null && rating >= 4) {
     await pool
       .request()
       .input('Usuario', sql.NVarChar(64), userKey)
       .input('FilmeId', sql.Int, numericMovieId)
-      .input('Nota', sql.TinyInt, safeRating)
       .query(`
-        INSERT INTO dbo.NotasPessoais (IdentificadorUsuario, FilmeId, Nota)
-        VALUES (@Usuario, @FilmeId, @Nota)
+        DELETE FROM dbo.AvaliacoesFilmes
+        WHERE FilmeId = @FilmeId AND IdentificadorUsuario = @Usuario AND Gostou = 0
+      `);
+  } else if (rating !== null && rating <= 2) {
+    await pool
+      .request()
+      .input('Usuario', sql.NVarChar(64), userKey)
+      .input('FilmeId', sql.Int, numericMovieId)
+      .query(`
+        DELETE FROM dbo.AvaliacoesFilmes
+        WHERE FilmeId = @FilmeId AND IdentificadorUsuario = @Usuario AND Gostou = 1
       `);
   }
 
-  const [movieNotesRes, userNotesRes, evalsRes] = await Promise.all([
+  const [movieNotesRes, evalsRes, commentsRes, userActivity] = await Promise.all([
     pool
       .request()
       .input('FilmeId', sql.Int, numericMovieId)
-      .query<{ Nota: number }>(`
-        SELECT Nota FROM dbo.NotasPessoais WHERE FilmeId = @FilmeId
-      `),
-    pool
-      .request()
-      .input('Usuario', sql.NVarChar(64), userKey)
-      .query<{ FilmeId: number; Nota: number }>(`
-        SELECT FilmeId, Nota FROM dbo.NotasPessoais
-        WHERE IdentificadorUsuario = @Usuario
+      .query<SqlNoteRow>(`
+        SELECT FilmeId, IdentificadorUsuario, Nota FROM dbo.NotasPessoais WHERE FilmeId = @FilmeId
       `),
     pool
       .request()
@@ -1179,38 +1537,51 @@ export async function saveUserMovieRating(
         FROM dbo.AvaliacoesFilmes
         WHERE FilmeId = @FilmeId
       `),
+    pool
+      .request()
+      .input('FilmeId', sql.Int, numericMovieId)
+      .query<SqlCommentRow>(`
+        SELECT Id, FilmeId, IdentificadorUsuario, Autor, Texto, CriadoEm
+        FROM dbo.ComentariosFilmes
+        WHERE FilmeId = @FilmeId
+        ORDER BY CriadoEm DESC
+      `),
+    loadSqlUserActivity(pool, userKey, 'cinabrio'),
   ]);
 
-  const baseAuthorRating = Number(targetMovie.NotaAutor ?? targetMovie.NotaMedia);
-  const allUserNotes = movieNotesRes.recordset.map((r) => Number(r.Nota));
+  const ownerKey = targetMovie.CriadoPorUsuarioKey || undefined;
+  const otherNotes = movieNotesRes.recordset.filter(
+    (n) => !ownerKey || n.IdentificadorUsuario !== ownerKey
+  );
   const totalSum =
-    baseAuthorRating + allUserNotes.reduce((acc, item) => acc + item, 0);
-  const updatedAverage = Math.round((totalSum / (1 + allUserNotes.length)) * 10) / 10;
+    nextAuthorRating + otherNotes.reduce((acc, item) => acc + Number(item.Nota), 0);
+  const updatedAverage = Math.round((totalSum / (1 + otherNotes.length)) * 10) / 10;
 
   const updatedMovieRes = await pool
     .request()
     .input('FilmeId', sql.Int, numericMovieId)
     .input('NotaMedia', sql.Decimal(2, 1), updatedAverage)
-    .input('NotaAutor', sql.Decimal(2, 1), baseAuthorRating)
+    .input('NotaAutor', sql.Decimal(2, 1), nextAuthorRating)
     .query<SqlMovieRow>(`
       UPDATE dbo.Filmes
       SET NotaMedia = @NotaMedia,
-          NotaAutor = COALESCE(NotaAutor, @NotaAutor)
+          NotaAutor = @NotaAutor
       OUTPUT INSERTED.*
       WHERE Id = @FilmeId
     `);
 
-  const nextRatings: Record<string, number> = {};
-  for (const r of userNotesRes.recordset) {
-    nextRatings[String(r.FilmeId)] = Number(r.Nota);
-  }
-
   const updatedMovie = mapSqlMovies(
     [updatedMovieRes.recordset[0] ?? targetMovie],
-    evalsRes.recordset
+    evalsRes.recordset,
+    movieNotesRes.recordset,
+    commentsRes.recordset
   )[0];
 
-  return { personalRatings: nextRatings, movie: updatedMovie };
+  return {
+    ok: true,
+    personalRatings: userActivity.personalRatings,
+    movie: updatedMovie,
+  };
 }
 
 export async function updateUserPalette(
@@ -1244,7 +1615,7 @@ export async function updateUserPalette(
 }
 
 // ---------------------------------------------------------------------------
-// Catálogo, Avaliações e Chat (SQL Server quando configurado, JSON local caso contrário)
+// Catálogo, Comentários, Avaliações e Chat
 // ---------------------------------------------------------------------------
 
 export async function getHealthStatus(): Promise<{
@@ -1284,10 +1655,12 @@ export async function listMovies(): Promise<MovieRecord[]> {
   }
 
   const pool = await getSqlPool();
-  const [moviesRes, evalsRes] = await Promise.all([
+  await ensureAuthSchema(pool);
+
+  const [moviesRes, evalsRes, notesRes, commentsRes] = await Promise.all([
     pool.request().query<SqlMovieRow>(`
       SELECT Id, Titulo, Diretor, AnoLancamento, DuracaoMinutos, Genero,
-             Sinopse, IndicadoPor, MotivoIndicacao, PosterUrl, NotaMedia, CriadoEm
+             Sinopse, IndicadoPor, CriadoPorUsuarioKey, MotivoIndicacao, PosterUrl, NotaMedia, NotaAutor, CriadoEm
       FROM dbo.Filmes
       ORDER BY CriadoEm DESC, Id DESC
     `),
@@ -1295,9 +1668,23 @@ export async function listMovies(): Promise<MovieRecord[]> {
       SELECT FilmeId, IdentificadorUsuario, Gostou
       FROM dbo.AvaliacoesFilmes
     `),
+    pool.request().query<SqlNoteRow>(`
+      SELECT FilmeId, IdentificadorUsuario, Nota
+      FROM dbo.NotasPessoais
+    `),
+    pool.request().query<SqlCommentRow>(`
+      SELECT Id, FilmeId, IdentificadorUsuario, Autor, Texto, CriadoEm
+      FROM dbo.ComentariosFilmes
+      ORDER BY CriadoEm DESC
+    `),
   ]);
 
-  return mapSqlMovies(moviesRes.recordset, evalsRes.recordset);
+  return mapSqlMovies(
+    moviesRes.recordset,
+    evalsRes.recordset,
+    notesRes.recordset,
+    commentsRes.recordset
+  );
 }
 
 export interface CreateMovieInput {
@@ -1314,9 +1701,26 @@ export interface CreateMovieInput {
   clientId: string;
 }
 
-export async function createMovie(input: CreateMovieInput): Promise<MovieRecord> {
+export async function createMovie(
+  input: CreateMovieInput
+): Promise<
+  | { ok: true; movie: MovieRecord }
+  | { ok: false; code: 'DUPLICATE_MOVIE'; existingMovieId: string }
+> {
+  const normalizedNewTitle = normalizeTitleKey(input.title);
+
   if (!isSqlServerConfigured()) {
     const db = loadLocalDb();
+    const duplicate = db.movies.find(
+      (m) =>
+        normalizeTitleKey(m.title) === normalizedNewTitle &&
+        Math.abs(m.year - input.year) <= 1
+    );
+    if (duplicate) {
+      return { ok: false, code: 'DUPLICATE_MOVIE', existingMovieId: duplicate.id };
+    }
+
+    const initialLike = input.rating >= 3;
     const newMovie: MovieRecord = {
       id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       title: input.title,
@@ -1326,23 +1730,40 @@ export async function createMovie(input: CreateMovieInput): Promise<MovieRecord>
       genre: input.genre,
       synopsis: input.synopsis,
       recommendedBy: input.recommendedBy,
+      ownerUserKey: input.clientId,
       recommendationNote: input.recommendationNote,
       posterUrl: input.posterUrl,
       rating: input.rating,
       authorRating: input.rating,
-      likedBy: [input.clientId],
-      dislikedBy: [],
+      ratingsCount: 1,
+      likedBy: initialLike ? [input.clientId] : [],
+      dislikedBy: initialLike ? [] : [input.clientId],
+      comments: [],
       createdAt: Date.now(),
     };
     db.movies = [newMovie, ...db.movies];
     saveLocalDb(db);
-    return newMovie;
+    return { ok: true, movie: newMovie };
   }
 
   const pool = await getSqlPool();
   await ensureAuthSchema(pool);
   if (input.posterUrl.startsWith('data:image/')) {
     await ensurePosterColumnMax(pool);
+  }
+
+  const existingMoviesRes = await pool
+    .request()
+    .query<{ Id: number; Titulo: string; AnoLancamento: number }>(
+      `SELECT Id, Titulo, AnoLancamento FROM dbo.Filmes`
+    );
+  const duplicate = existingMoviesRes.recordset.find(
+    (m) =>
+      normalizeTitleKey(m.Titulo) === normalizedNewTitle &&
+      Math.abs(m.AnoLancamento - input.year) <= 1
+  );
+  if (duplicate) {
+    return { ok: false, code: 'DUPLICATE_MOVIE', existingMovieId: String(duplicate.Id) };
   }
 
   const insertRes = await pool
@@ -1354,36 +1775,403 @@ export async function createMovie(input: CreateMovieInput): Promise<MovieRecord>
     .input('Genero', sql.NVarChar(40), input.genre)
     .input('Sinopse', sql.NVarChar(400), input.synopsis)
     .input('IndicadoPor', sql.NVarChar(40), input.recommendedBy)
+    .input('CriadoPorUsuarioKey', sql.NVarChar(64), input.clientId)
     .input('MotivoIndicacao', sql.NVarChar(240), input.recommendationNote)
     .input('PosterUrl', sql.NVarChar(sql.MAX), input.posterUrl)
     .input('NotaMedia', sql.Decimal(2, 1), input.rating)
     .query<SqlMovieRow>(`
       INSERT INTO dbo.Filmes (
         Titulo, Diretor, AnoLancamento, DuracaoMinutos, Genero,
-        Sinopse, IndicadoPor, MotivoIndicacao, PosterUrl, NotaMedia, NotaAutor
+        Sinopse, IndicadoPor, CriadoPorUsuarioKey, MotivoIndicacao, PosterUrl, NotaMedia, NotaAutor
       )
       OUTPUT INSERTED.*
       VALUES (
         @Titulo, @Diretor, @AnoLancamento, @DuracaoMinutos, @Genero,
-        @Sinopse, @IndicadoPor, @MotivoIndicacao, @PosterUrl, @NotaMedia, @NotaMedia
+        @Sinopse, @IndicadoPor, @CriadoPorUsuarioKey, @MotivoIndicacao, @PosterUrl, @NotaMedia, @NotaMedia
       )
     `);
 
   const created = insertRes.recordset[0];
+  const initialLike = input.rating >= 3;
 
   await pool
     .request()
     .input('FilmeId', sql.Int, created.Id)
     .input('Usuario', sql.NVarChar(64), input.clientId)
-    .input('Gostou', sql.Bit, 1)
+    .input('Gostou', sql.Bit, initialLike ? 1 : 0)
     .query(`
       INSERT INTO dbo.AvaliacoesFilmes (FilmeId, IdentificadorUsuario, Gostou)
       VALUES (@FilmeId, @Usuario, @Gostou)
     `);
 
-  return mapSqlMovies([created], [
-    { FilmeId: created.Id, IdentificadorUsuario: input.clientId, Gostou: true },
-  ])[0];
+  return {
+    ok: true,
+    movie: mapSqlMovies(
+      [created],
+      [{ FilmeId: created.Id, IdentificadorUsuario: input.clientId, Gostou: initialLike }],
+      [],
+      []
+    )[0],
+  };
+}
+
+export async function updateMovie(
+  movieId: string,
+  userKey: string,
+  input: {
+    title: string;
+    director: string;
+    year: number;
+    durationMinutes: number;
+    genre: MovieGenre;
+    synopsis: string;
+    recommendationNote: string;
+    posterUrl: string;
+    rating: number;
+  }
+): Promise<
+  | { ok: true; movie: MovieRecord }
+  | { ok: false; code: 'NOT_FOUND' | 'FORBIDDEN' | 'DUPLICATE_MOVIE'; existingMovieId?: string }
+> {
+  const normalizedTitle = normalizeTitleKey(input.title);
+
+  if (!isSqlServerConfigured()) {
+    const db = loadLocalDb();
+    const index = db.movies.findIndex((m) => m.id === movieId);
+    if (index === -1) return { ok: false, code: 'NOT_FOUND' };
+
+    const target = db.movies[index];
+    if (target.ownerUserKey !== userKey) {
+      return { ok: false, code: 'FORBIDDEN' };
+    }
+
+    const duplicate = db.movies.find(
+      (m) =>
+        m.id !== movieId &&
+        normalizeTitleKey(m.title) === normalizedTitle &&
+        Math.abs(m.year - input.year) <= 1
+    );
+    if (duplicate) {
+      return { ok: false, code: 'DUPLICATE_MOVIE', existingMovieId: duplicate.id };
+    }
+
+    const updatedRaw: MovieRecord = {
+      ...target,
+      title: input.title,
+      director: input.director,
+      year: input.year,
+      durationMinutes: input.durationMinutes,
+      genre: input.genre,
+      synopsis: input.synopsis,
+      recommendationNote: input.recommendationNote,
+      posterUrl: input.posterUrl,
+      authorRating: input.rating,
+    };
+    const enriched = enrichLocalMovie(updatedRaw, db.personalRatings, db.comments);
+    db.movies[index] = enriched;
+    saveLocalDb(db);
+    return { ok: true, movie: enriched };
+  }
+
+  const numericId = Number(movieId);
+  if (!Number.isInteger(numericId) || numericId <= 0) {
+    return { ok: false, code: 'NOT_FOUND' };
+  }
+
+  const pool = await getSqlPool();
+  await ensureAuthSchema(pool);
+  if (input.posterUrl.startsWith('data:image/')) {
+    await ensurePosterColumnMax(pool);
+  }
+
+  const existingRes = await pool
+    .request()
+    .input('Id', sql.Int, numericId)
+    .query<SqlMovieRow>(`SELECT * FROM dbo.Filmes WHERE Id = @Id`);
+  const target = existingRes.recordset[0];
+  if (!target) return { ok: false, code: 'NOT_FOUND' };
+  if (target.CriadoPorUsuarioKey !== userKey) {
+    return { ok: false, code: 'FORBIDDEN' };
+  }
+
+  const otherMoviesRes = await pool
+    .request()
+    .input('Id', sql.Int, numericId)
+    .query<{ Id: number; Titulo: string; AnoLancamento: number }>(
+      `SELECT Id, Titulo, AnoLancamento FROM dbo.Filmes WHERE Id <> @Id`
+    );
+  const duplicate = otherMoviesRes.recordset.find(
+    (m) =>
+      normalizeTitleKey(m.Titulo) === normalizedTitle &&
+      Math.abs(m.AnoLancamento - input.year) <= 1
+  );
+  if (duplicate) {
+    return { ok: false, code: 'DUPLICATE_MOVIE', existingMovieId: String(duplicate.Id) };
+  }
+
+  const [notesRes, evalsRes, commentsRes] = await Promise.all([
+    pool
+      .request()
+      .input('FilmeId', sql.Int, numericId)
+      .query<SqlNoteRow>(
+        `SELECT FilmeId, IdentificadorUsuario, Nota FROM dbo.NotasPessoais WHERE FilmeId = @FilmeId`
+      ),
+    pool
+      .request()
+      .input('FilmeId', sql.Int, numericId)
+      .query<SqlEvalRow>(
+        `SELECT FilmeId, IdentificadorUsuario, Gostou FROM dbo.AvaliacoesFilmes WHERE FilmeId = @FilmeId`
+      ),
+    pool
+      .request()
+      .input('FilmeId', sql.Int, numericId)
+      .query<SqlCommentRow>(
+        `SELECT Id, FilmeId, IdentificadorUsuario, Autor, Texto, CriadoEm FROM dbo.ComentariosFilmes WHERE FilmeId = @FilmeId ORDER BY CriadoEm DESC`
+      ),
+  ]);
+
+  const otherNotes = notesRes.recordset.filter((n) => n.IdentificadorUsuario !== userKey);
+  const totalSum = input.rating + otherNotes.reduce((acc, n) => acc + Number(n.Nota), 0);
+  const updatedAverage = Math.round((totalSum / (1 + otherNotes.length)) * 10) / 10;
+
+  const updatedRes = await pool
+    .request()
+    .input('Id', sql.Int, numericId)
+    .input('Titulo', sql.NVarChar(100), input.title)
+    .input('Diretor', sql.NVarChar(80), input.director)
+    .input('AnoLancamento', sql.Int, input.year)
+    .input('DuracaoMinutos', sql.Int, input.durationMinutes)
+    .input('Genero', sql.NVarChar(40), input.genre)
+    .input('Sinopse', sql.NVarChar(400), input.synopsis)
+    .input('MotivoIndicacao', sql.NVarChar(240), input.recommendationNote)
+    .input('PosterUrl', sql.NVarChar(sql.MAX), input.posterUrl)
+    .input('NotaMedia', sql.Decimal(2, 1), updatedAverage)
+    .input('NotaAutor', sql.Decimal(2, 1), input.rating)
+    .query<SqlMovieRow>(`
+      UPDATE dbo.Filmes
+      SET Titulo = @Titulo,
+          Diretor = @Diretor,
+          AnoLancamento = @AnoLancamento,
+          DuracaoMinutos = @DuracaoMinutos,
+          Genero = @Genero,
+          Sinopse = @Sinopse,
+          MotivoIndicacao = @MotivoIndicacao,
+          PosterUrl = @PosterUrl,
+          NotaMedia = @NotaMedia,
+          NotaAutor = @NotaAutor
+      OUTPUT INSERTED.*
+      WHERE Id = @Id
+    `);
+
+  return {
+    ok: true,
+    movie: mapSqlMovies(
+      [updatedRes.recordset[0]],
+      evalsRes.recordset,
+      notesRes.recordset,
+      commentsRes.recordset
+    )[0],
+  };
+}
+
+export async function deleteMovie(
+  movieId: string,
+  userKey: string
+): Promise<{ ok: true } | { ok: false; code: 'NOT_FOUND' | 'FORBIDDEN' }> {
+  if (!isSqlServerConfigured()) {
+    const db = loadLocalDb();
+    const target = db.movies.find((m) => m.id === movieId);
+    if (!target) return { ok: false, code: 'NOT_FOUND' };
+    if (target.ownerUserKey !== userKey) return { ok: false, code: 'FORBIDDEN' };
+
+    db.movies = db.movies.filter((m) => m.id !== movieId);
+    db.comments = db.comments.filter((c) => c.movieId !== movieId);
+    for (const uKey of Object.keys(db.watchlists)) {
+      db.watchlists[uKey] = db.watchlists[uKey].filter((id) => id !== movieId);
+    }
+    for (const uKey of Object.keys(db.personalRatings)) {
+      delete db.personalRatings[uKey][movieId];
+    }
+    db.messages = db.messages.map((msg) =>
+      msg.attachedMovieId === movieId ? { ...msg, attachedMovieId: undefined } : msg
+    );
+    saveLocalDb(db);
+    return { ok: true };
+  }
+
+  const numericId = Number(movieId);
+  if (!Number.isInteger(numericId) || numericId <= 0) {
+    return { ok: false, code: 'NOT_FOUND' };
+  }
+
+  const pool = await getSqlPool();
+  await ensureAuthSchema(pool);
+
+  const existingRes = await pool
+    .request()
+    .input('Id', sql.Int, numericId)
+    .query<{ CriadoPorUsuarioKey: string | null }>(
+      `SELECT CriadoPorUsuarioKey FROM dbo.Filmes WHERE Id = @Id`
+    );
+  const target = existingRes.recordset[0];
+  if (!target) return { ok: false, code: 'NOT_FOUND' };
+  if (target.CriadoPorUsuarioKey !== userKey) return { ok: false, code: 'FORBIDDEN' };
+
+  await pool
+    .request()
+    .input('Id', sql.Int, numericId)
+    .query(`DELETE FROM dbo.Filmes WHERE Id = @Id`);
+  return { ok: true };
+}
+
+export async function addMovieComment(input: {
+  movieId: string;
+  userKey: string;
+  author: string;
+  text: string;
+}): Promise<MovieRecord | null> {
+  if (!isSqlServerConfigured()) {
+    const db = loadLocalDb();
+    const movieIndex = db.movies.findIndex((m) => m.id === input.movieId);
+    if (movieIndex === -1) return null;
+
+    const newComment: MovieCommentRecord = {
+      id: `cmt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      movieId: input.movieId,
+      userKey: input.userKey,
+      author: input.author,
+      text: input.text,
+      createdAt: Date.now(),
+    };
+    db.comments = [newComment, ...db.comments];
+    const enriched = enrichLocalMovie(db.movies[movieIndex], db.personalRatings, db.comments);
+    db.movies[movieIndex] = enriched;
+    saveLocalDb(db);
+    return enriched;
+  }
+
+  const numericId = Number(input.movieId);
+  if (!Number.isInteger(numericId) || numericId <= 0) return null;
+
+  const pool = await getSqlPool();
+  await ensureAuthSchema(pool);
+
+  const movieRes = await pool
+    .request()
+    .input('Id', sql.Int, numericId)
+    .query<SqlMovieRow>(`SELECT * FROM dbo.Filmes WHERE Id = @Id`);
+  const targetMovie = movieRes.recordset[0];
+  if (!targetMovie) return null;
+
+  await pool
+    .request()
+    .input('FilmeId', sql.Int, numericId)
+    .input('Usuario', sql.NVarChar(64), input.userKey)
+    .input('Autor', sql.NVarChar(40), input.author)
+    .input('Texto', sql.NVarChar(240), input.text)
+    .query(`
+      INSERT INTO dbo.ComentariosFilmes (FilmeId, IdentificadorUsuario, Autor, Texto)
+      VALUES (@FilmeId, @Usuario, @Autor, @Texto)
+    `);
+
+  const [evalsRes, notesRes, commentsRes] = await Promise.all([
+    pool
+      .request()
+      .input('FilmeId', sql.Int, numericId)
+      .query<SqlEvalRow>(
+        `SELECT FilmeId, IdentificadorUsuario, Gostou FROM dbo.AvaliacoesFilmes WHERE FilmeId = @FilmeId`
+      ),
+    pool
+      .request()
+      .input('FilmeId', sql.Int, numericId)
+      .query<SqlNoteRow>(
+        `SELECT FilmeId, IdentificadorUsuario, Nota FROM dbo.NotasPessoais WHERE FilmeId = @FilmeId`
+      ),
+    pool
+      .request()
+      .input('FilmeId', sql.Int, numericId)
+      .query<SqlCommentRow>(
+        `SELECT Id, FilmeId, IdentificadorUsuario, Autor, Texto, CriadoEm FROM dbo.ComentariosFilmes WHERE FilmeId = @FilmeId ORDER BY CriadoEm DESC`
+      ),
+  ]);
+
+  return mapSqlMovies(
+    [targetMovie],
+    evalsRes.recordset,
+    notesRes.recordset,
+    commentsRes.recordset
+  )[0];
+}
+
+export async function deleteMovieComment(input: {
+  movieId: string;
+  commentId: string;
+  userKey: string;
+}): Promise<MovieRecord | null> {
+  if (!isSqlServerConfigured()) {
+    const db = loadLocalDb();
+    const movieIndex = db.movies.findIndex((m) => m.id === input.movieId);
+    if (movieIndex === -1) return null;
+    db.comments = db.comments.filter(
+      (c) => !(c.id === input.commentId && c.movieId === input.movieId && c.userKey === input.userKey)
+    );
+    const enriched = enrichLocalMovie(db.movies[movieIndex], db.personalRatings, db.comments);
+    db.movies[movieIndex] = enriched;
+    saveLocalDb(db);
+    return enriched;
+  }
+
+  const numericMovieId = Number(input.movieId);
+  const numericCommentId = Number(input.commentId);
+  if (!Number.isInteger(numericMovieId) || !Number.isInteger(numericCommentId)) return null;
+
+  const pool = await getSqlPool();
+  await ensureAuthSchema(pool);
+
+  await pool
+    .request()
+    .input('Id', sql.Int, numericCommentId)
+    .input('FilmeId', sql.Int, numericMovieId)
+    .input('Usuario', sql.NVarChar(64), input.userKey)
+    .query(`
+      DELETE FROM dbo.ComentariosFilmes
+      WHERE Id = @Id AND FilmeId = @FilmeId AND IdentificadorUsuario = @Usuario
+    `);
+
+  const [movieRes, evalsRes, notesRes, commentsRes] = await Promise.all([
+    pool
+      .request()
+      .input('Id', sql.Int, numericMovieId)
+      .query<SqlMovieRow>(`SELECT * FROM dbo.Filmes WHERE Id = @Id`),
+    pool
+      .request()
+      .input('FilmeId', sql.Int, numericMovieId)
+      .query<SqlEvalRow>(
+        `SELECT FilmeId, IdentificadorUsuario, Gostou FROM dbo.AvaliacoesFilmes WHERE FilmeId = @FilmeId`
+      ),
+    pool
+      .request()
+      .input('FilmeId', sql.Int, numericMovieId)
+      .query<SqlNoteRow>(
+        `SELECT FilmeId, IdentificadorUsuario, Nota FROM dbo.NotasPessoais WHERE FilmeId = @FilmeId`
+      ),
+    pool
+      .request()
+      .input('FilmeId', sql.Int, numericMovieId)
+      .query<SqlCommentRow>(
+        `SELECT Id, FilmeId, IdentificadorUsuario, Autor, Texto, CriadoEm FROM dbo.ComentariosFilmes WHERE FilmeId = @FilmeId ORDER BY CriadoEm DESC`
+      ),
+  ]);
+
+  const targetMovie = movieRes.recordset[0];
+  if (!targetMovie) return null;
+
+  return mapSqlMovies(
+    [targetMovie],
+    evalsRes.recordset,
+    notesRes.recordset,
+    commentsRes.recordset
+  )[0];
 }
 
 export async function evaluateMovie(
@@ -1423,6 +2211,8 @@ export async function evaluateMovie(
   if (!Number.isInteger(numericId) || numericId <= 0) return null;
 
   const pool = await getSqlPool();
+  await ensureAuthSchema(pool);
+
   const movieRes = await pool
     .request()
     .input('Id', sql.Int, numericId)
@@ -1475,16 +2265,33 @@ export async function evaluateMovie(
       `);
   }
 
-  const evalsRes = await pool
-    .request()
-    .input('FilmeId', sql.Int, numericId)
-    .query<SqlEvalRow>(`
-      SELECT FilmeId, IdentificadorUsuario, Gostou
-      FROM dbo.AvaliacoesFilmes
-      WHERE FilmeId = @FilmeId
-    `);
+  const [evalsRes, notesRes, commentsRes] = await Promise.all([
+    pool
+      .request()
+      .input('FilmeId', sql.Int, numericId)
+      .query<SqlEvalRow>(
+        `SELECT FilmeId, IdentificadorUsuario, Gostou FROM dbo.AvaliacoesFilmes WHERE FilmeId = @FilmeId`
+      ),
+    pool
+      .request()
+      .input('FilmeId', sql.Int, numericId)
+      .query<SqlNoteRow>(
+        `SELECT FilmeId, IdentificadorUsuario, Nota FROM dbo.NotasPessoais WHERE FilmeId = @FilmeId`
+      ),
+    pool
+      .request()
+      .input('FilmeId', sql.Int, numericId)
+      .query<SqlCommentRow>(
+        `SELECT Id, FilmeId, IdentificadorUsuario, Autor, Texto, CriadoEm FROM dbo.ComentariosFilmes WHERE FilmeId = @FilmeId ORDER BY CriadoEm DESC`
+      ),
+  ]);
 
-  return mapSqlMovies([targetMovie], evalsRes.recordset)[0];
+  return mapSqlMovies(
+    [targetMovie],
+    evalsRes.recordset,
+    notesRes.recordset,
+    commentsRes.recordset
+  )[0];
 }
 
 export async function listChatMessages(): Promise<ChatMessageRecord[]> {
@@ -1493,14 +2300,17 @@ export async function listChatMessages(): Promise<ChatMessageRecord[]> {
   }
 
   const pool = await getSqlPool();
+  await ensureAuthSchema(pool);
+
   const res = await pool.request().query<SqlChatRow>(`
-    SELECT TOP 100 Id, Autor, Texto, FilmeAnexadoId, CriadoEm
+    SELECT TOP 100 Id, IdentificadorUsuario, Autor, Texto, FilmeAnexadoId, CriadoEm
     FROM dbo.MensagensChat
     ORDER BY CriadoEm ASC, Id ASC
   `);
 
   return res.recordset.map((row) => ({
     id: String(row.Id),
+    userKey: row.IdentificadorUsuario || undefined,
     author: row.Autor,
     text: row.Texto,
     attachedMovieId: row.FilmeAnexadoId ? String(row.FilmeAnexadoId) : undefined,
@@ -1510,6 +2320,7 @@ export async function listChatMessages(): Promise<ChatMessageRecord[]> {
 
 export async function createChatMessage(input: {
   clientMsgId?: string;
+  userKey: string;
   author: string;
   text: string;
   attachedMovieId?: string;
@@ -1528,6 +2339,7 @@ export async function createChatMessage(input: {
 
     const newMsg: ChatMessageRecord = {
       id: input.clientMsgId || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      userKey: input.userKey,
       author: input.author,
       text: input.text,
       attachedMovieId: validMovieId,
@@ -1540,6 +2352,8 @@ export async function createChatMessage(input: {
   }
 
   const pool = await getSqlPool();
+  await ensureAuthSchema(pool);
+
   let attachedInt: number | null = null;
   if (input.attachedMovieId) {
     const parsedId = Number(input.attachedMovieId);
@@ -1556,21 +2370,54 @@ export async function createChatMessage(input: {
 
   const insertRes = await pool
     .request()
+    .input('Usuario', sql.NVarChar(64), input.userKey)
     .input('Autor', sql.NVarChar(40), input.author)
     .input('Texto', sql.NVarChar(400), input.text)
     .input('FilmeAnexadoId', sql.Int, attachedInt)
     .query<SqlChatRow>(`
-      INSERT INTO dbo.MensagensChat (Autor, Texto, FilmeAnexadoId)
+      INSERT INTO dbo.MensagensChat (IdentificadorUsuario, Autor, Texto, FilmeAnexadoId)
       OUTPUT INSERTED.*
-      VALUES (@Autor, @Texto, @FilmeAnexadoId)
+      VALUES (@Usuario, @Autor, @Texto, @FilmeAnexadoId)
     `);
 
   const created = insertRes.recordset[0];
   return {
     id: String(created.Id),
+    userKey: created.IdentificadorUsuario || undefined,
     author: created.Autor,
     text: created.Texto,
     attachedMovieId: created.FilmeAnexadoId ? String(created.FilmeAnexadoId) : undefined,
     createdAt: new Date(created.CriadoEm).getTime(),
   };
+}
+
+export async function deleteChatMessage(
+  messageId: string,
+  userKey: string
+): Promise<boolean> {
+  if (!isSqlServerConfigured()) {
+    const db = loadLocalDb();
+    const target = db.messages.find((m) => m.id === messageId);
+    if (!target || target.userKey !== userKey) return false;
+    db.messages = db.messages.filter((m) => m.id !== messageId);
+    saveLocalDb(db);
+    return true;
+  }
+
+  const numericId = Number(messageId);
+  if (!Number.isInteger(numericId) || numericId <= 0) return false;
+
+  const pool = await getSqlPool();
+  await ensureAuthSchema(pool);
+
+  const res = await pool
+    .request()
+    .input('Id', sql.Int, numericId)
+    .input('Usuario', sql.NVarChar(64), userKey)
+    .query(`
+      DELETE FROM dbo.MensagensChat
+      WHERE Id = @Id AND IdentificadorUsuario = @Usuario
+    `);
+
+  return (res.rowsAffected[0] ?? 0) > 0;
 }

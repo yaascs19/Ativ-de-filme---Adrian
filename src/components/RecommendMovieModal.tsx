@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from 'react';
-import { Image as ImageIcon, Trash2, Upload, UserCheck, X } from 'lucide-react';
+import { ExternalLink, Image as ImageIcon, Trash2, Upload, UserCheck, X } from 'lucide-react';
 import { GENRES, getDefaultPosterForGenre, POSTER_PRESETS } from '../data/posters';
 import { AuthUser, MovieGenre, MovieItem } from '../types/cinema';
 
@@ -7,16 +7,22 @@ interface RecommendMovieModalProps {
   isOpen: boolean;
   authUser: AuthUser | null;
   authHeaders: Record<string, string>;
+  editingMovie?: MovieItem | null;
   onClose: () => void;
   onMovieCreated: (movie: MovieItem, shareInChat: boolean) => void;
+  onMovieUpdated: (movie: MovieItem) => void;
+  onOpenExistingMovie: (movieId: string) => void;
 }
 
 export function RecommendMovieModal({
   isOpen,
   authUser,
   authHeaders,
+  editingMovie,
   onClose,
   onMovieCreated,
+  onMovieUpdated,
+  onOpenExistingMovie,
 }: RecommendMovieModalProps) {
   const [title, setTitle] = useState('');
   const [director, setDirector] = useState('');
@@ -35,7 +41,49 @@ export function RecommendMovieModal({
   const [shareInChat, setShareInChat] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [duplicateMovieId, setDuplicateMovieId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const isEditing = Boolean(editingMovie);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setErrorMsg('');
+    setDuplicateMovieId(null);
+
+    if (editingMovie) {
+      setTitle(editingMovie.title);
+      setDirector(editingMovie.director);
+      setYear(String(editingMovie.year));
+      setDurationMinutes(String(editingMovie.durationMinutes));
+      setGenre(editingMovie.genre);
+      setRating(String(editingMovie.authorRating ?? editingMovie.rating));
+      setSynopsis(editingMovie.synopsis);
+      setRecommendationNote(editingMovie.recommendationNote);
+      if (editingMovie.posterUrl.startsWith('data:image/')) {
+        setUploadedPosterDataUrl(editingMovie.posterUrl);
+        setUploadedFileName('Imagem atual enviada');
+      } else {
+        setUploadedPosterDataUrl('');
+        setUploadedFileName('');
+        setPresetPosterUrl(editingMovie.posterUrl || getDefaultPosterForGenre(editingMovie.genre));
+      }
+      setShareInChat(false);
+    } else {
+      setTitle('');
+      setDirector('');
+      setYear('2025');
+      setDurationMinutes('115');
+      setGenre('Romance');
+      setRating('4.5');
+      setSynopsis('');
+      setRecommendationNote('');
+      setUploadedPosterDataUrl('');
+      setUploadedFileName('');
+      setPresetPosterUrl(getDefaultPosterForGenre('Romance'));
+      setShareInChat(true);
+    }
+  }, [isOpen, editingMovie]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -52,7 +100,7 @@ export function RecommendMovieModal({
 
   const handleGenreChange = (nextGenre: MovieGenre) => {
     setGenre(nextGenre);
-    if (!uploadedPosterDataUrl) {
+    if (!uploadedPosterDataUrl && !isEditing) {
       setPresetPosterUrl(getDefaultPosterForGenre(nextGenre));
     }
   };
@@ -125,9 +173,26 @@ export function RecommendMovieModal({
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
+    setDuplicateMovieId(null);
+
+    const parsedYear = Number(year);
+    const parsedDuration = Number(durationMinutes);
+    const parsedRating = Number(rating);
 
     if (title.trim().length < 2 || director.trim().length < 2) {
-      setErrorMsg('Informe o título do filme e o nome da direção.');
+      setErrorMsg('Informe o título do filme e o nome da direção (mín. 2 caracteres).');
+      return;
+    }
+    if (!Number.isFinite(parsedYear) || parsedYear < 1900 || parsedYear > 2030) {
+      setErrorMsg('Informe um ano válido entre 1900 e 2030.');
+      return;
+    }
+    if (!Number.isFinite(parsedDuration) || parsedDuration < 30 || parsedDuration > 400) {
+      setErrorMsg('Informe a duração do filme entre 30 e 400 minutos.');
+      return;
+    }
+    if (!Number.isFinite(parsedRating) || parsedRating < 1 || parsedRating > 5) {
+      setErrorMsg('Informe uma nota válida entre 1 e 5.');
       return;
     }
     if (synopsis.trim().length < 10) {
@@ -137,8 +202,13 @@ export function RecommendMovieModal({
 
     setSubmitting(true);
     try {
-      const response = await fetch('/api/movies', {
-        method: 'POST',
+      const endpoint = editingMovie
+        ? `/api/movies/${encodeURIComponent(editingMovie.id)}`
+        : '/api/movies';
+      const method = editingMovie ? 'PATCH' : 'POST';
+
+      const response = await fetch(endpoint, {
+        method,
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
@@ -148,28 +218,34 @@ export function RecommendMovieModal({
         body: JSON.stringify({
           title: title.trim(),
           director: director.trim(),
-          year: Number(year),
-          durationMinutes: Number(durationMinutes),
+          year: parsedYear,
+          durationMinutes: parsedDuration,
           genre,
-          rating: Number(rating),
+          rating: parsedRating,
           synopsis: synopsis.trim(),
           recommendationNote: recommendationNote.trim(),
           posterUrl: effectivePosterUrl,
         }),
       });
 
-      const data = (await response.json()) as { movie?: MovieItem; error?: string };
+      const data = (await response.json()) as {
+        movie?: MovieItem;
+        error?: string;
+        existingMovieId?: string;
+      };
       if (!response.ok || !data.movie) {
         setErrorMsg(data.error || 'Não foi possível salvar a indicação.');
+        if (response.status === 409 && data.existingMovieId) {
+          setDuplicateMovieId(data.existingMovieId);
+        }
         return;
       }
 
-      onMovieCreated(data.movie, shareInChat);
-      setTitle('');
-      setDirector('');
-      setSynopsis('');
-      setRecommendationNote('');
-      handleClearUploadedImage();
+      if (editingMovie) {
+        onMovieUpdated(data.movie);
+      } else {
+        onMovieCreated(data.movie, shareInChat);
+      }
       onClose();
     } catch {
       setErrorMsg('Erro de conexão com o servidor ao salvar o filme.');
@@ -196,10 +272,12 @@ export function RecommendMovieModal({
               id="recommend-modal-title"
               className="font-display text-xl font-bold text-[var(--cr-ink)]"
             >
-              Indicar Novo Filme para o Catálogo
+              {isEditing ? 'Editar Indicação de Filme' : 'Indicar Novo Filme para o Catálogo'}
             </h2>
             <p className="mt-1 text-xs text-[var(--cr-ink-muted)]">
-              Escolha uma imagem do seu computador ou selecione uma capa pronta abaixo.
+              {isEditing
+                ? 'Atualize as informações da sua indicação ou ajuste a imagem de capa.'
+                : 'Escolha uma imagem do seu computador ou selecione uma capa pronta abaixo.'}
             </p>
           </div>
           <button
@@ -216,9 +294,23 @@ export function RecommendMovieModal({
           {errorMsg && (
             <div
               role="alert"
-              className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-xs font-medium text-[#991B1B] dark:border-rose-800 dark:bg-rose-950/60 dark:text-rose-200"
+              className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-xs font-medium text-[#991B1B] dark:border-rose-800 dark:bg-rose-950/60 dark:text-rose-200 space-y-2"
             >
-              {errorMsg}
+              <p>{errorMsg}</p>
+              {duplicateMovieId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const targetId = duplicateMovieId;
+                    onClose();
+                    onOpenExistingMovie(targetId);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#FCA5A5] bg-white px-3 py-1.5 text-xs font-semibold text-[#991B1B] hover:bg-[#FEE2E2] dark:border-rose-700 dark:bg-rose-900/50 dark:text-rose-100 cursor-pointer"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Abrir filme já cadastrado</span>
+                </button>
+              )}
             </div>
           )}
 
@@ -495,15 +587,17 @@ export function RecommendMovieModal({
             </div>
           </div>
 
-          <label className="flex items-center gap-2.5 text-xs font-medium text-[var(--cr-ink-secondary)] cursor-pointer">
-            <input
-              type="checkbox"
-              checked={shareInChat}
-              onChange={(e) => setShareInChat(e.target.checked)}
-              className="h-4 w-4 rounded accent-[var(--cr-accent)]"
-            />
-            <span>Anunciar minha indicação automaticamente no chat da comunidade</span>
-          </label>
+          {!isEditing && (
+            <label className="flex items-center gap-2.5 text-xs font-medium text-[var(--cr-ink-secondary)] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={shareInChat}
+                onChange={(e) => setShareInChat(e.target.checked)}
+                className="h-4 w-4 rounded accent-[var(--cr-accent)]"
+              />
+              <span>Anunciar minha indicação automaticamente no chat da comunidade</span>
+            </label>
+          )}
 
           <div className="flex items-center justify-end gap-3 border-t border-[var(--cr-border)] pt-4">
             <button
@@ -518,7 +612,11 @@ export function RecommendMovieModal({
               disabled={submitting}
               className="min-h-[42px] rounded-lg bg-[var(--cr-accent)] px-5 py-2 text-xs font-semibold text-white transition-colors hover:bg-[var(--cr-accent-hover)] disabled:opacity-50 cursor-pointer"
             >
-              {submitting ? 'Salvando...' : 'Publicar Indicação'}
+              {submitting
+                ? 'Salvando...'
+                : isEditing
+                  ? 'Salvar Alterações'
+                  : 'Publicar Indicação'}
             </button>
           </div>
         </form>

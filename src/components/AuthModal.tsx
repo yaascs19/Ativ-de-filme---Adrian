@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { Eye, EyeOff, LogIn, LogOut, UserCheck, UserPlus, X } from 'lucide-react';
+import { Check, Eye, EyeOff, LogIn, LogOut, Pencil, UserCheck, UserPlus, X } from 'lucide-react';
 import { AuthUser, ThemePaletteId, UserActivity } from '../types/cinema';
 
 type AuthTab = 'login' | 'register';
@@ -10,10 +10,13 @@ interface AuthModalProps {
   promptReason?: string;
   currentPalette: ThemePaletteId;
   authUser: AuthUser | null;
+  authHeaders: Record<string, string>;
   watchlistCount: number;
   ratingsCount: number;
+  authoredCount: number;
   onClose: () => void;
   onAuthSuccess: (user: AuthUser, activity: UserActivity, sessionToken?: string) => void;
+  onProfileUpdated: (user: AuthUser) => void;
   onLogout: () => Promise<void>;
 }
 
@@ -23,10 +26,13 @@ export function AuthModal({
   promptReason,
   currentPalette,
   authUser,
+  authHeaders,
   watchlistCount,
   ratingsCount,
+  authoredCount,
   onClose,
   onAuthSuccess,
+  onProfileUpdated,
   onLogout,
 }: AuthModalProps) {
   const [tab, setTab] = useState<AuthTab>(initialTab);
@@ -34,6 +40,14 @@ export function AuthModal({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+
+  // Edição de perfil
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [profileName, setProfileName] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [profileSuccess, setProfileSuccess] = useState('');
+
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -41,8 +55,15 @@ export function AuthModal({
     if (isOpen) {
       setTab(initialTab);
       setErrorMsg('');
+      setProfileSuccess('');
+      setEditingProfile(false);
+      setCurrentPassword('');
+      setNewPassword('');
+      if (authUser) {
+        setProfileName(authUser.name);
+      }
     }
-  }, [isOpen, initialTab]);
+  }, [isOpen, initialTab, authUser]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -113,6 +134,65 @@ export function AuthModal({
     }
   };
 
+  const handleSaveProfile = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!authUser) return;
+    setErrorMsg('');
+    setProfileSuccess('');
+
+    const trimmedName = profileName.trim();
+    if (trimmedName.length < 2) {
+      setErrorMsg('O nome deve ter pelo menos 2 caracteres.');
+      return;
+    }
+    if (newPassword && !currentPassword) {
+      setErrorMsg('Informe sua senha atual para definir uma nova senha.');
+      return;
+    }
+    if (newPassword && newPassword.length < 6) {
+      setErrorMsg('A nova senha deve ter pelo menos 6 caracteres.');
+      return;
+    }
+    if (trimmedName === authUser.name && !newPassword) {
+      setEditingProfile(false);
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/auth/profile', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'CineRoda',
+          ...authHeaders,
+        },
+        body: JSON.stringify({
+          name: trimmedName,
+          currentPassword: currentPassword || undefined,
+          newPassword: newPassword || undefined,
+        }),
+      });
+
+      const data = (await res.json()) as { user?: AuthUser; error?: string };
+      if (!res.ok || !data.user) {
+        setErrorMsg(data.error || 'Não foi possível atualizar o perfil.');
+        return;
+      }
+
+      onProfileUpdated(data.user);
+      setCurrentPassword('');
+      setNewPassword('');
+      setEditingProfile(false);
+      setProfileSuccess('Perfil atualizado com sucesso.');
+    } catch {
+      setErrorMsg('Erro de conexão ao salvar seu perfil.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleLogoutClick = async () => {
     setSubmitting(true);
     await onLogout();
@@ -129,7 +209,7 @@ export function AuthModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md overflow-hidden rounded-2xl border border-[var(--cr-border)] bg-[var(--cr-surface)] p-6 shadow-2xl sm:p-7"
+        className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-2xl border border-[var(--cr-border)] bg-[var(--cr-surface)] p-6 shadow-2xl sm:p-7"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 border-b border-[var(--cr-border)] pb-4">
@@ -163,27 +243,136 @@ export function AuthModal({
 
         {authUser ? (
           <div className="mt-5 space-y-5">
-            <div className="rounded-xl border border-[var(--cr-border)] bg-[var(--cr-surface-hover)] p-4 space-y-2">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--cr-accent-soft)] text-[var(--cr-accent)]">
-                  <UserCheck className="h-5 w-5" aria-hidden="true" />
+            {errorMsg && (
+              <div
+                role="alert"
+                className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] px-4 py-3 text-xs font-medium text-[#991B1B] dark:border-rose-800 dark:bg-rose-950/60 dark:text-rose-200"
+              >
+                {errorMsg}
+              </div>
+            )}
+
+            {profileSuccess && (
+              <div className="flex items-center gap-2 rounded-xl border border-[#A7F3D0] bg-[#ECFDF5] px-4 py-3 text-xs font-medium text-[#065F46] dark:border-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
+                <Check className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>{profileSuccess}</span>
+              </div>
+            )}
+
+            <div className="rounded-xl border border-[var(--cr-border)] bg-[var(--cr-surface-hover)] p-4 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[var(--cr-accent-soft)] text-[var(--cr-accent)]">
+                    <UserCheck className="h-5 w-5" aria-hidden="true" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold text-[var(--cr-ink)]">
+                      {authUser.name}
+                    </p>
+                    <p className="truncate text-xs text-[var(--cr-ink-muted)]">
+                      {authUser.email}
+                    </p>
+                  </div>
                 </div>
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-bold text-[var(--cr-ink)]">
-                    {authUser.name}
-                  </p>
-                  <p className="truncate text-xs text-[var(--cr-ink-muted)]">
-                    {authUser.email}
-                  </p>
-                </div>
+
+                {!editingProfile && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingProfile(true);
+                      setErrorMsg('');
+                      setProfileSuccess('');
+                    }}
+                    className="inline-flex min-h-[34px] items-center gap-1.5 rounded-lg border border-[var(--cr-border)] bg-[var(--cr-surface)] px-2.5 py-1 text-xs font-semibold text-[var(--cr-ink-secondary)] hover:border-[var(--cr-accent)] hover:text-[var(--cr-accent)] whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>Editar perfil</span>
+                  </button>
+                )}
               </div>
 
-              <div className="flex items-center gap-3 pt-2 text-xs text-[var(--cr-ink-secondary)] tabular-nums">
-                <span>{watchlistCount} filmes na lista</span>
+              <div className="flex flex-wrap items-center gap-2.5 pt-1 text-xs text-[var(--cr-ink-secondary)] tabular-nums">
+                <span>{watchlistCount} na lista</span>
                 <span aria-hidden="true">·</span>
                 <span>{ratingsCount} notas dadas</span>
+                <span aria-hidden="true">·</span>
+                <span>{authoredCount} {authoredCount === 1 ? 'indicação' : 'indicações'}</span>
               </div>
             </div>
+
+            {editingProfile && (
+              <form
+                onSubmit={handleSaveProfile}
+                className="rounded-xl border border-[var(--cr-border)] bg-[var(--cr-surface-hover)] p-4 space-y-3"
+              >
+                <div>
+                  <label
+                    htmlFor="profile-name"
+                    className="block text-xs font-semibold text-[var(--cr-ink-secondary)]"
+                  >
+                    Nome exibido na comunidade
+                  </label>
+                  <input
+                    id="profile-name"
+                    type="text"
+                    required
+                    minLength={2}
+                    maxLength={40}
+                    value={profileName}
+                    onChange={(e) => setProfileName(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-[var(--cr-border-strong)] bg-[var(--cr-surface)] px-3 py-2 text-sm text-[var(--cr-ink)] focus:border-[var(--cr-accent)] focus:outline-none"
+                  />
+                </div>
+
+                <div className="border-t border-[var(--cr-border)] pt-3 space-y-2.5">
+                  <p className="text-[11px] font-medium text-[var(--cr-ink-muted)]">
+                    Alterar senha (opcional)
+                  </p>
+                  <input
+                    type="password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder="Senha atual"
+                    autoComplete="current-password"
+                    className="w-full rounded-lg border border-[var(--cr-border-strong)] bg-[var(--cr-surface)] px-3 py-2 text-xs text-[var(--cr-ink)] placeholder:text-[var(--cr-ink-muted)] focus:border-[var(--cr-accent)] focus:outline-none"
+                  />
+                  <input
+                    type="password"
+                    minLength={6}
+                    maxLength={100}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Nova senha (mín. 6 caracteres)"
+                    autoComplete="new-password"
+                    className="w-full rounded-lg border border-[var(--cr-border-strong)] bg-[var(--cr-surface)] px-3 py-2 text-xs text-[var(--cr-ink)] placeholder:text-[var(--cr-ink-muted)] focus:border-[var(--cr-accent)] focus:outline-none"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => {
+                      setEditingProfile(false);
+                      setProfileName(authUser.name);
+                      setCurrentPassword('');
+                      setNewPassword('');
+                      setErrorMsg('');
+                    }}
+                    className="min-h-[36px] rounded-lg border border-[var(--cr-border)] bg-[var(--cr-surface)] px-3 py-1.5 text-xs font-medium text-[var(--cr-ink-secondary)] hover:bg-[var(--cr-surface-alt)] cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="min-h-[36px] rounded-lg bg-[var(--cr-accent)] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[var(--cr-accent-hover)] disabled:opacity-50 cursor-pointer"
+                  >
+                    {submitting ? 'Salvando...' : 'Salvar perfil'}
+                  </button>
+                </div>
+              </form>
+            )}
 
             <div className="flex items-center justify-end gap-3 border-t border-[var(--cr-border)] pt-4">
               <button

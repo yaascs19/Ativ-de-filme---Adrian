@@ -12,20 +12,17 @@
       "recommendationNote": "Prepare o lenço! Romance emocionante com química incrível entre os protagonistas.",
       "posterUrl": "/assets/aistudio/filme1_a0effce9.jpg",
       "rating": 4.8,
-      "votedBy": [
-        "seed-1",
-        "seed-2",
-        "seed-3",
-        "seed-4"
-      ],
-      "createdAt": 1795204362504,
+      "authorRating": 4.8,
+      "ratingsCount": 1,
       "likedBy": [
         "seed-1",
         "seed-2",
         "seed-3",
         "seed-4"
       ],
-      "dislikedBy": []
+      "dislikedBy": [],
+      "comments": [],
+      "createdAt": 1795257143758
     },
     {
       "id": "mov-pequeno-principe",
@@ -39,18 +36,16 @@
       "recommendationNote": "Animação poética que mistura CGI e stop-motion, perfeita para qualquer idade.",
       "posterUrl": "/assets/aistudio/filme2_ba15de3e.jpg",
       "rating": 4.9,
-      "votedBy": [
-        "seed-1",
-        "seed-2",
-        "seed-5"
-      ],
-      "createdAt": 1795206162504,
+      "authorRating": 4.9,
+      "ratingsCount": 1,
       "likedBy": [
         "seed-1",
         "seed-2",
         "seed-5"
       ],
-      "dislikedBy": []
+      "dislikedBy": [],
+      "comments": [],
+      "createdAt": 1795258943758
     },
     {
       "id": "mov-homem-aranha",
@@ -64,18 +59,16 @@
       "recommendationNote": "Ação eletrizante, clima urbano clássico do herói e ótimo gancho dramático.",
       "posterUrl": "/assets/aistudio/filme3_f5e4cc7c.jpg",
       "rating": 4.7,
-      "votedBy": [
-        "seed-2",
-        "seed-3",
-        "seed-4"
-      ],
-      "createdAt": 1795207962504,
+      "authorRating": 4.7,
+      "ratingsCount": 1,
       "likedBy": [
         "seed-2",
         "seed-3",
         "seed-4"
       ],
-      "dislikedBy": []
+      "dislikedBy": [],
+      "comments": [],
+      "createdAt": 1795260743758
     },
     {
       "id": "mov-sing",
@@ -89,18 +82,18 @@
       "recommendationNote": "Divertido do início ao fim e com uma trilha sonora cheia de sucessos.",
       "posterUrl": "/assets/aistudio/filme4_7f9fb5f4.jpg",
       "rating": 4.6,
-      "votedBy": [
-        "seed-1",
-        "seed-3",
-        "seed-5"
-      ],
-      "createdAt": 1795209762504,
+      "authorRating": 4.6,
+      "ratingsCount": 1,
       "likedBy": [
         "seed-1",
         "seed-3",
         "seed-5"
       ],
-      "dislikedBy": []
+      "dislikedBy": [
+        "seed-6"
+      ],
+      "comments": [],
+      "createdAt": 1795262543758
     },
     {
       "id": "mov-wicked",
@@ -114,18 +107,16 @@
       "recommendationNote": "Cenários grandiosos, vocais impressionantes e figurinos impecáveis.",
       "posterUrl": "/assets/aistudio/filme8_195fa374.jpg",
       "rating": 4.8,
-      "votedBy": [
-        "seed-1",
-        "seed-4",
-        "seed-6"
-      ],
-      "createdAt": 1795211562504,
+      "authorRating": 4.8,
+      "ratingsCount": 1,
       "likedBy": [
         "seed-1",
         "seed-4",
         "seed-6"
       ],
-      "dislikedBy": []
+      "dislikedBy": [],
+      "comments": [],
+      "createdAt": 1795264343758
     },
     {
       "id": "mov-minha-melhor-amiga",
@@ -139,16 +130,15 @@
       "recommendationNote": "Comédia nacional leve e certeira para dar boas risadas em grupo.",
       "posterUrl": "/assets/aistudio/filme6_6b1c72a1.jpg",
       "rating": 4.5,
-      "votedBy": [
-        "seed-2",
-        "seed-5"
-      ],
-      "createdAt": 1795213362504,
+      "authorRating": 4.5,
+      "ratingsCount": 1,
       "likedBy": [
         "seed-2",
         "seed-5"
       ],
-      "dislikedBy": []
+      "dislikedBy": [],
+      "comments": [],
+      "createdAt": 1795266143758
     }
   ],
   "messages": [
@@ -157,29 +147,26 @@
       "author": "Marina Silva",
       "text": "Se você quer um romance para chorar de verdade, assista Como Eu Era Antes de Você!",
       "attachedMovieId": "mov-como-eu-era",
-      "createdAt": 1795213662504
+      "createdAt": 1795266443758
     },
     {
       "id": "msg-seed-2",
       "author": "Gabriel Rocha",
       "text": "Concordo! E quem curte musical não pode deixar de ver Wicked.",
       "attachedMovieId": "mov-wicked",
-      "createdAt": 1795214322504
+      "createdAt": 1795267103758
     },
     {
       "id": "msg-seed-3",
       "author": "Beatriz Costa",
       "text": "Alguém já assistiu Homem-Aranha: Um Novo Dia ou quer indicar outro filme de ação?",
       "attachedMovieId": "mov-homem-aranha",
-      "createdAt": 1795214862504
+      "createdAt": 1795267643758
     }
   ],
   "users": [],
   "sessions": [],
-  "watchlists": {
-    "usr-1795266377509-4wnvs": [
-      "mov-como-eu-era"
-    ],
-    "usr-1795267032845-s8h0i": []
-  }
+  "watchlists": {},
+  "personalRatings": {},
+  "comments": []
 }

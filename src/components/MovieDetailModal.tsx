@@ -1,17 +1,21 @@
-import { useEffect, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import {
   Bookmark,
   Film,
   MessageSquarePlus,
+  Pencil,
+  Send,
   Star,
   ThumbsDown,
   ThumbsUp,
+  Trash2,
   X,
 } from 'lucide-react';
-import { EvaluationChoice, MovieItem } from '../types/cinema';
+import { AuthUser, EvaluationChoice, MovieItem } from '../types/cinema';
 
 interface MovieDetailModalProps {
   movie: MovieItem | null;
+  authUser: AuthUser | null;
   isSaved: boolean;
   hasLiked: boolean;
   hasDisliked: boolean;
@@ -19,12 +23,27 @@ interface MovieDetailModalProps {
   onClose: () => void;
   onToggleWatchlist: (movieId: string) => void;
   onEvaluateMovie: (movieId: string, choice: EvaluationChoice) => void;
-  onRateMovie: (movieId: string, rating: number) => void;
+  onRateMovie: (movieId: string, rating: number | null) => void;
   onRecommendInChat: (movie: MovieItem) => void;
+  onEditMovie: (movie: MovieItem) => void;
+  onDeleteMovie: (movieId: string) => Promise<void>;
+  onAddComment: (movieId: string, text: string) => Promise<boolean>;
+  onDeleteComment: (movieId: string, commentId: string) => Promise<void>;
+  onOpenAuthModal: (reason: string) => void;
+}
+
+function formatCommentDate(timestamp: number): string {
+  return new Date(timestamp).toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 export function MovieDetailModal({
   movie,
+  authUser,
   isSaved,
   hasLiked,
   hasDisliked,
@@ -34,11 +53,24 @@ export function MovieDetailModal({
   onEvaluateMovie,
   onRateMovie,
   onRecommendInChat,
+  onEditMovie,
+  onDeleteMovie,
+  onAddComment,
+  onDeleteComment,
+  onOpenAuthModal,
 }: MovieDetailModalProps) {
   const [imageError, setImageError] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deletingMovie, setDeletingMovie] = useState(false);
+  const [commentText, setCommentText] = useState('');
+  const [sendingComment, setSendingComment] = useState(false);
+  const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
 
   useEffect(() => {
     setImageError(false);
+    setConfirmingDelete(false);
+    setDeletingMovie(false);
+    setCommentText('');
   }, [movie?.id]);
 
   useEffect(() => {
@@ -57,6 +89,50 @@ export function MovieDetailModal({
   const totalVotes = movie.likedBy.length + movie.dislikedBy.length;
   const approvalPct =
     totalVotes > 0 ? Math.round((movie.likedBy.length / totalVotes) * 100) : 100;
+  const ratingsCount = movie.ratingsCount ?? 1;
+  const comments = movie.comments ?? [];
+  const isOwner = Boolean(
+    authUser && movie.ownerUserKey && authUser.userKey === movie.ownerUserKey
+  );
+
+  const handleStarClick = (value: number) => {
+    if (!isOwner && personalRating === value) {
+      onRateMovie(movie.id, null);
+      return;
+    }
+    onRateMovie(movie.id, value);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (deletingMovie) return;
+    setDeletingMovie(true);
+    await onDeleteMovie(movie.id);
+    setDeletingMovie(false);
+  };
+
+  const handleSubmitComment = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!authUser) {
+      onOpenAuthModal('Entre na sua conta para comentar sobre este filme.');
+      return;
+    }
+    const clean = commentText.trim();
+    if (clean.length < 2 || sendingComment) return;
+
+    setSendingComment(true);
+    const ok = await onAddComment(movie.id, clean);
+    if (ok) {
+      setCommentText('');
+    }
+    setSendingComment(false);
+  };
+
+  const handleDeleteCommentClick = async (commentId: string) => {
+    if (deletingCommentId) return;
+    setDeletingCommentId(commentId);
+    await onDeleteComment(movie.id, commentId);
+    setDeletingCommentId(null);
+  };
 
   return (
     <div
@@ -126,9 +202,56 @@ export function MovieDetailModal({
               </p>
 
               <div className="mt-5 border-t border-[var(--cr-border)] pt-4">
-                <p className="text-xs font-semibold text-[var(--cr-ink)]">
-                  Indicado por {movie.recommendedBy}
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-[var(--cr-ink)]">
+                    Indicado por {movie.recommendedBy}
+                  </p>
+
+                  {isOwner && (
+                    <div className="flex items-center gap-2">
+                      {!confirmingDelete ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => onEditMovie(movie)}
+                            className="inline-flex min-h-[34px] items-center gap-1.5 rounded-lg border border-[var(--cr-border)] bg-[var(--cr-surface)] px-2.5 py-1 text-xs font-semibold text-[var(--cr-ink-secondary)] hover:border-[var(--cr-accent)] hover:text-[var(--cr-accent)] whitespace-nowrap shrink-0 cursor-pointer"
+                          >
+                            <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                            <span>Editar</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmingDelete(true)}
+                            className="inline-flex min-h-[34px] items-center gap-1.5 rounded-lg border border-[var(--cr-border)] bg-[var(--cr-surface)] px-2.5 py-1 text-xs font-semibold text-[#DC2626] hover:border-[#FECACA] hover:bg-[#FEF2F2] dark:hover:bg-rose-950/50 whitespace-nowrap shrink-0 cursor-pointer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                            <span>Excluir</span>
+                          </button>
+                        </>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={deletingMovie}
+                            onClick={handleConfirmDelete}
+                            className="inline-flex min-h-[34px] items-center rounded-lg bg-[#DC2626] px-2.5 py-1 text-xs font-semibold text-white hover:bg-[#B91C1C] disabled:opacity-50 whitespace-nowrap shrink-0 cursor-pointer"
+                          >
+                            {deletingMovie ? 'Excluindo...' : 'Confirmar exclusão'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={deletingMovie}
+                            onClick={() => setConfirmingDelete(false)}
+                            className="inline-flex min-h-[34px] items-center rounded-lg border border-[var(--cr-border)] px-2.5 py-1 text-xs font-medium text-[var(--cr-ink-secondary)] hover:bg-[var(--cr-surface-hover)] whitespace-nowrap shrink-0 cursor-pointer"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 <p className="mt-1 font-editorial text-base italic leading-relaxed text-[var(--cr-ink-secondary)]">
                   “{movie.recommendationNote}”
                 </p>
@@ -145,7 +268,7 @@ export function MovieDetailModal({
                       type="button"
                       onClick={() => onEvaluateMovie(movie.id, 'like')}
                       aria-pressed={hasLiked}
-                      className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors tabular-nums cursor-pointer ${
+                      className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors tabular-nums whitespace-nowrap shrink-0 cursor-pointer ${
                         hasLiked
                           ? 'border-[#A7F3D0] bg-[#ECFDF5] text-[#065F46] dark:border-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
                           : 'border-[var(--cr-border)] bg-[var(--cr-surface-hover)] text-[var(--cr-ink-secondary)] hover:bg-[var(--cr-surface)]'
@@ -159,7 +282,7 @@ export function MovieDetailModal({
                       type="button"
                       onClick={() => onEvaluateMovie(movie.id, 'dislike')}
                       aria-pressed={hasDisliked}
-                      className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors tabular-nums cursor-pointer ${
+                      className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors tabular-nums whitespace-nowrap shrink-0 cursor-pointer ${
                         hasDisliked
                           ? 'border-[#FECACA] bg-[#FEF2F2] text-[#991B1B] dark:border-rose-800 dark:bg-rose-950/60 dark:text-rose-300'
                           : 'border-[var(--cr-border)] bg-[var(--cr-surface-hover)] text-[var(--cr-ink-secondary)] hover:bg-[var(--cr-surface)]'
@@ -177,18 +300,25 @@ export function MovieDetailModal({
                   </span>
                   <span className="font-mono text-xs text-[var(--cr-ink-muted)] tabular-nums">
                     {personalRating !== undefined
-                      ? `Sua nota: ${personalRating.toFixed(1)}/5 · Média geral: ${movie.rating.toFixed(1)}/5`
-                      : `Média: ${movie.rating.toFixed(1)}/5`}
+                      ? `Sua nota: ${personalRating.toFixed(1)}/5 · Média geral: ${movie.rating.toFixed(1)}/5 (${ratingsCount})`
+                      : `Média: ${movie.rating.toFixed(1)}/5 (${ratingsCount} ${ratingsCount === 1 ? 'avaliação' : 'avaliações'})`}
                   </span>
                 </div>
+
                 <div className="flex items-center gap-1.5">
                   {[1, 2, 3, 4, 5].map((value) => {
                     const active = (personalRating ?? 0) >= value;
+                    const isCurrentExact = personalRating === value;
                     return (
                       <button
                         key={value}
                         type="button"
-                        onClick={() => onRateMovie(movie.id, value)}
+                        onClick={() => handleStarClick(value)}
+                        title={
+                          !isOwner && isCurrentExact
+                            ? 'Clique novamente para remover sua nota'
+                            : `Avaliar com ${value} estrelas`
+                        }
                         aria-label={`Avaliar com ${value} estrelas`}
                         className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--cr-border)] bg-[var(--cr-surface)] transition-colors hover:border-[#F59E0B] cursor-pointer"
                       >
@@ -202,6 +332,96 @@ export function MovieDetailModal({
                     );
                   })}
                 </div>
+                {personalRating !== undefined && (
+                  <p className="text-[11px] text-[var(--cr-ink-muted)]">
+                    {isOwner
+                      ? 'Como autor da indicação, você pode ajustar sua nota de 1 a 5 estrelas a qualquer momento.'
+                      : 'Dica: clique novamente na estrela selecionada se quiser remover sua nota.'}
+                  </p>
+                )}
+              </div>
+
+              {/* Comentários e opiniões curtas sobre o filme */}
+              <div className="mt-5 border-t border-[var(--cr-border)] pt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-semibold text-[var(--cr-ink-secondary)]">
+                    Comentários da comunidade ({comments.length})
+                  </h3>
+                </div>
+
+                {authUser ? (
+                  <form onSubmit={handleSubmitComment} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      maxLength={240}
+                      disabled={sendingComment}
+                      value={commentText}
+                      onChange={(e) => setCommentText(e.target.value)}
+                      placeholder="Escreva um comentário curto sobre o filme..."
+                      aria-label="Comentário sobre o filme"
+                      className="min-w-0 flex-1 rounded-lg border border-[var(--cr-border-strong)] bg-[var(--cr-surface)] px-3 py-2 text-xs text-[var(--cr-ink)] placeholder:text-[var(--cr-ink-muted)] focus:border-[var(--cr-accent)] focus:outline-none"
+                    />
+                    <button
+                      type="submit"
+                      disabled={sendingComment || commentText.trim().length < 2}
+                      className="inline-flex min-h-[38px] shrink-0 items-center gap-1.5 rounded-lg bg-[var(--cr-accent)] px-3 text-xs font-semibold text-white transition-colors hover:bg-[var(--cr-accent-hover)] disabled:opacity-45 cursor-pointer"
+                    >
+                      <Send className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>{sendingComment ? 'Enviando...' : 'Publicar'}</span>
+                    </button>
+                  </form>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onOpenAuthModal('Entre na sua conta para deixar um comentário neste filme.')
+                    }
+                    className="w-full rounded-lg border border-dashed border-[var(--cr-border-strong)] bg-[var(--cr-surface-hover)] px-3 py-2.5 text-left text-xs font-medium text-[var(--cr-ink-secondary)] hover:border-[var(--cr-accent)] hover:text-[var(--cr-accent)] cursor-pointer"
+                  >
+                    Entre na sua conta para comentar sobre este filme.
+                  </button>
+                )}
+
+                {comments.length > 0 && (
+                  <ul className="max-h-44 space-y-2 overflow-y-auto pr-1">
+                    {comments.map((comment) => {
+                      const canDelete = Boolean(authUser && comment.userKey === authUser.userKey);
+                      return (
+                        <li
+                          key={comment.id}
+                          className="rounded-xl border border-[var(--cr-border)] bg-[var(--cr-surface-hover)] px-3 py-2.5"
+                        >
+                          <div className="flex items-center justify-between gap-2 text-[11px] text-[var(--cr-ink-muted)]">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="font-semibold text-[var(--cr-ink)] truncate">
+                                {comment.author}
+                              </span>
+                              <span aria-hidden="true">·</span>
+                              <span className="font-mono tabular-nums shrink-0">
+                                {formatCommentDate(comment.createdAt)}
+                              </span>
+                            </div>
+                            {canDelete && (
+                              <button
+                                type="button"
+                                disabled={deletingCommentId === comment.id}
+                                onClick={() => handleDeleteCommentClick(comment.id)}
+                                aria-label="Excluir comentário"
+                                title="Excluir comentário"
+                                className="inline-flex h-6 w-6 items-center justify-center rounded text-[var(--cr-ink-muted)] hover:text-[#DC2626] cursor-pointer shrink-0"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                              </button>
+                            )}
+                          </div>
+                          <p className="mt-1 text-xs leading-relaxed text-[var(--cr-ink-secondary)] break-words">
+                            {comment.text}
+                          </p>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
               </div>
             </div>
 

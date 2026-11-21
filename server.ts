@@ -9,6 +9,7 @@ import {
   handleChatRequest,
   handleEvaluateMovieRequest,
   handleHealthRequest,
+  handleMovieByIdRequest,
   handleMoviesRequest,
   handleUserActivityRequest,
 } from './api/_lib/handlers.js';
@@ -43,6 +44,14 @@ async function startServer() {
     await handleMoviesRequest(req, res);
   });
 
+  app.patch('/api/movies/:id', async (req: Request, res: Response) => {
+    await handleMovieByIdRequest(req, res);
+  });
+
+  app.delete('/api/movies/:id', async (req: Request, res: Response) => {
+    await handleMovieByIdRequest(req, res);
+  });
+
   app.post('/api/movies/:id/evaluate', async (req: Request, res: Response) => {
     await handleEvaluateMovieRequest(req, res);
   });
@@ -52,6 +61,10 @@ async function startServer() {
   });
 
   app.post('/api/chat', async (req: Request, res: Response) => {
+    await handleChatRequest(req, res);
+  });
+
+  app.delete('/api/chat', async (req: Request, res: Response) => {
     await handleChatRequest(req, res);
   });
 

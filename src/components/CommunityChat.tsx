@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useRef, useState } from 'react';
-import { Film, LogIn, MessageCircle, Paperclip, Send, UserCheck, X } from 'lucide-react';
+import { Film, LogIn, MessageCircle, Paperclip, Send, Trash2, UserCheck, X } from 'lucide-react';
 import { AuthUser, ChatMessage, MovieItem } from '../types/cinema';
 
 interface CommunityChatProps {
@@ -10,6 +10,7 @@ interface CommunityChatProps {
   attachedMovieId: string | null;
   onChangeAttachedMovieId: (movieId: string | null) => void;
   onSendMessage: (text: string, attachedMovieId?: string) => Promise<boolean>;
+  onDeleteMessage: (messageId: string) => Promise<void>;
   onSelectMovie: (movie: MovieItem) => void;
   isConnected: boolean;
 }
@@ -29,12 +30,14 @@ export function CommunityChat({
   attachedMovieId,
   onChangeAttachedMovieId,
   onSendMessage,
+  onDeleteMessage,
   onSelectMovie,
   isConnected,
 }: CommunityChatProps) {
   const [messageText, setMessageText] = useState('');
   const [sending, setSending] = useState(false);
   const [showMoviePicker, setShowMoviePicker] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const listEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -67,6 +70,13 @@ export function CommunityChat({
       setShowMoviePicker(false);
     }
     setSending(false);
+  };
+
+  const handleDeleteClick = async (messageId: string) => {
+    if (deletingId) return;
+    setDeletingId(messageId);
+    await onDeleteMessage(messageId);
+    setDeletingId(null);
   };
 
   return (
@@ -136,7 +146,11 @@ export function CommunityChat({
         ) : (
           messages.map((msg) => {
             const isOwn =
-              authUser !== null && msg.author.toLowerCase() === authUser.name.toLowerCase();
+              authUser !== null &&
+              (msg.userKey
+                ? msg.userKey === authUser.userKey
+                : msg.author.toLowerCase() === authUser.name.toLowerCase());
+            const canDelete = Boolean(authUser && msg.userKey && msg.userKey === authUser.userKey);
             const linkedMovie = msg.attachedMovieId
               ? movies.find((m) => m.id === msg.attachedMovieId)
               : undefined;
@@ -154,6 +168,18 @@ export function CommunityChat({
                   <span className="font-mono tabular-nums">
                     {formatTime(msg.createdAt)}
                   </span>
+                  {canDelete && (
+                    <button
+                      type="button"
+                      disabled={deletingId === msg.id}
+                      onClick={() => handleDeleteClick(msg.id)}
+                      title="Apagar mensagem"
+                      aria-label="Apagar mensagem"
+                      className="ml-0.5 inline-flex h-5 w-5 items-center justify-center rounded text-[var(--cr-ink-muted)] hover:text-[#DC2626] disabled:opacity-40 cursor-pointer"
+                    >
+                      <Trash2 className="h-3 w-3" aria-hidden="true" />
+                    </button>
+                  )}
                 </div>
 
                 <div

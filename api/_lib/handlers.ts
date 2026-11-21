@@ -1,7 +1,11 @@
 import {
+  addMovieComment,
   AuthUserRecord,
   createChatMessage,
   createMovie,
+  deleteChatMessage,
+  deleteMovie,
+  deleteMovieComment,
   evaluateMovie,
   getHealthStatus,
   getSessionUser,
@@ -19,7 +23,9 @@ import {
   sanitizeText,
   saveUserMovieRating,
   toggleUserWatchlist,
+  updateMovie,
   updateUserPalette,
+  updateUserProfile,
   UserActivityRecord,
   VALID_GENRES,
   VALID_PALETTES,
@@ -27,6 +33,8 @@ import {
 
 const SESSION_COOKIE_NAME = 'cineroda_session';
 const SESSION_COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 dias
+
+const rateLimitBuckets = new Map<string, number[]>();
 
 function formatDbError(err: unknown): { code?: string; message: string } {
   if (err && typeof err === 'object') {
@@ -57,6 +65,34 @@ function getHeader(req: ApiRequest, name: string): string {
   const raw = req.headers?.[name.toLowerCase()] ?? req.headers?.[name];
   if (Array.isArray(raw)) return raw[0] || '';
   return typeof raw === 'string' ? raw : '';
+}
+
+function getClientIp(req: ApiRequest): string {
+  const fwd = getHeader(req, 'x-forwarded-for').split(',')[0]?.trim();
+  const real = getHeader(req, 'x-real-ip').trim();
+  return fwd || real || 'local';
+}
+
+function checkRateLimit(bucketKey: string, maxHits: number, windowMs: number): boolean {
+  const now = Date.now();
+  const cutoff = now - windowMs;
+  const prev = rateLimitBuckets.get(bucketKey) ?? [];
+  const recent = prev.filter((ts) => ts > cutoff);
+  if (recent.length >= maxHits) {
+    rateLimitBuckets.set(bucketKey, recent);
+    return false;
+  }
+  recent.push(now);
+  rateLimitBuckets.set(bucketKey, recent);
+
+  if (rateLimitBuckets.size > 5000) {
+    for (const [k, list] of rateLimitBuckets.entries()) {
+      if (list.every((ts) => ts <= cutoff)) {
+        rateLimitBuckets.delete(k);
+      }
+    }
+  }
+  return true;
 }
 
 function parseCookies(cookieHeader: string): Record<string, string> {
@@ -163,6 +199,68 @@ async function resolveAuthenticatedSession(req: ApiRequest): Promise<{
   return { session, viaCookie, csrfOk: true };
 }
 
+function validateMoviePayload(body: Record<string, unknown>):
+  | {
+      ok: true;
+      data: {
+        title: string;
+        director: string;
+        year: number;
+        durationMinutes: number;
+        genre: MovieGenre;
+        synopsis: string;
+        recommendationNote: string;
+        posterUrl: string;
+        rating: number;
+      };
+    }
+  | { ok: false; error: string } {
+  const title = sanitizeText(body.title, 100);
+  const director = sanitizeText(body.director, 80);
+  const synopsis = sanitizeText(body.synopsis, 400);
+  const recommendationNote = sanitizeText(body.recommendationNote, 240);
+  const genre = body.genre as MovieGenre;
+  const year = Number(body.year);
+  const durationMinutes = Number(body.durationMinutes);
+  const rating = Number(body.rating);
+  const safePoster = sanitizePosterUrl(body.posterUrl);
+
+  if (title.length < 2 || director.length < 2 || synopsis.length < 10) {
+    return {
+      ok: false,
+      error: 'Preencha título (mín. 2 caracteres), direção e sinopse (mín. 10 caracteres).',
+    };
+  }
+  if (!VALID_GENRES.includes(genre)) {
+    return { ok: false, error: 'Gênero inválido.' };
+  }
+  if (!Number.isFinite(year) || year < 1900 || year > 2030) {
+    return { ok: false, error: 'Informe um ano válido entre 1900 e 2030.' };
+  }
+  if (!Number.isFinite(durationMinutes) || durationMinutes < 30 || durationMinutes > 400) {
+    return { ok: false, error: 'Informe a duração do filme entre 30 e 400 minutos.' };
+  }
+  if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+    return { ok: false, error: 'Informe uma nota inicial válida entre 1 e 5.' };
+  }
+
+  return {
+    ok: true,
+    data: {
+      title,
+      director,
+      year: Math.round(year),
+      durationMinutes: Math.round(durationMinutes),
+      genre,
+      synopsis,
+      recommendationNote:
+        recommendationNote || 'Indicado diretamente pela comunidade CineRoda.',
+      posterUrl: safePoster,
+      rating: Math.round(rating * 10) / 10,
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Endpoints de saúde
 // ---------------------------------------------------------------------------
@@ -183,7 +281,7 @@ export async function handleHealthRequest(_req: ApiRequest, res: ApiResponse): P
 }
 
 // ---------------------------------------------------------------------------
-// Endpoints de autenticação (/api/auth/:action)
+// Endpoints de autenticação e perfil (/api/auth/:action)
 // ---------------------------------------------------------------------------
 
 export async function handleAuthRequest(req: ApiRequest, res: ApiResponse): Promise<void> {
@@ -208,6 +306,14 @@ export async function handleAuthRequest(req: ApiRequest, res: ApiResponse): Prom
     }
 
     if (action === 'register' && req.method === 'POST') {
+      const ip = getClientIp(req);
+      if (!checkRateLimit(`auth:register:${ip}`, 15, 60_000)) {
+        res.status(429).json({
+          error: 'Muitas tentativas em sequência. Aguarde alguns segundos e tente novamente.',
+        });
+        return;
+      }
+
       const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<
         string,
         unknown
@@ -246,6 +352,14 @@ export async function handleAuthRequest(req: ApiRequest, res: ApiResponse): Prom
     }
 
     if (action === 'login' && req.method === 'POST') {
+      const ip = getClientIp(req);
+      if (!checkRateLimit(`auth:login:${ip}`, 15, 60_000)) {
+        res.status(429).json({
+          error: 'Muitas tentativas de login. Aguarde alguns segundos e tente novamente.',
+        });
+        return;
+      }
+
       const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<
         string,
         unknown
@@ -270,6 +384,70 @@ export async function handleAuthRequest(req: ApiRequest, res: ApiResponse): Prom
         activity: loggedIn.activity,
         sessionToken: loggedIn.sessionToken,
       });
+      return;
+    }
+
+    if (action === 'profile' && req.method === 'POST') {
+      const auth = await resolveAuthenticatedSession(req);
+      if (!auth.csrfOk) {
+        res.status(403).json({ error: 'Requisição bloqueada por proteção CSRF.' });
+        return;
+      }
+      if (!auth.session) {
+        res.status(401).json({ error: 'Faça login para editar seu perfil.' });
+        return;
+      }
+      if (!checkRateLimit(`auth:profile:${auth.session.user.userKey}`, 15, 60_000)) {
+        res.status(429).json({ error: 'Muitas alterações seguidas. Aguarde alguns segundos.' });
+        return;
+      }
+
+      const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<
+        string,
+        unknown
+      >;
+      const rawName = typeof body.name === 'string' ? sanitizeText(body.name, 40) : undefined;
+      const currentPassword =
+        typeof body.currentPassword === 'string' ? body.currentPassword : '';
+      const newPassword = typeof body.newPassword === 'string' ? body.newPassword : '';
+
+      if (rawName !== undefined && rawName.length < 2) {
+        res.status(400).json({ error: 'O nome deve ter pelo menos 2 caracteres.' });
+        return;
+      }
+      if (newPassword) {
+        if (!currentPassword) {
+          res.status(400).json({ error: 'Informe sua senha atual para definir uma nova senha.' });
+          return;
+        }
+        if (newPassword.length < 6 || newPassword.length > 100) {
+          res.status(400).json({ error: 'A nova senha deve ter entre 6 e 100 caracteres.' });
+          return;
+        }
+      }
+      if (rawName === undefined && !newPassword) {
+        res.status(400).json({ error: 'Nenhuma alteração informada.' });
+        return;
+      }
+
+      const updated = await updateUserProfile({
+        userId: auth.session.user.id,
+        userKey: auth.session.user.userKey,
+        name: rawName,
+        currentPassword: currentPassword || undefined,
+        newPassword: newPassword || undefined,
+      });
+
+      if (!updated.ok) {
+        if (updated.code === 'INVALID_CURRENT_PASSWORD') {
+          res.status(400).json({ error: 'A senha atual informada está incorreta.' });
+          return;
+        }
+        res.status(404).json({ error: 'Conta não encontrada.' });
+        return;
+      }
+
+      res.status(200).json({ user: updated.user });
       return;
     }
 
@@ -298,7 +476,7 @@ export async function handleAuthRequest(req: ApiRequest, res: ApiResponse): Prom
 }
 
 // ---------------------------------------------------------------------------
-// Endpoint de atividade pessoal salva na conta (/api/user/activity)
+// Endpoint de atividade pessoal e comentários (/api/user/activity)
 // ---------------------------------------------------------------------------
 
 export async function handleUserActivityRequest(req: ApiRequest, res: ApiResponse): Promise<void> {
@@ -315,6 +493,12 @@ export async function handleUserActivityRequest(req: ApiRequest, res: ApiRespons
     }
     if (!auth.session) {
       res.status(401).json({ error: 'Faça login para salvar sua atividade.' });
+      return;
+    }
+    if (!checkRateLimit(`activity:${auth.session.user.userKey}`, 60, 60_000)) {
+      res.status(429).json({
+        error: 'Muitas ações em sequência. Aguarde alguns instantes e tente novamente.',
+      });
       return;
     }
 
@@ -341,21 +525,38 @@ export async function handleUserActivityRequest(req: ApiRequest, res: ApiRespons
 
     if (action === 'rateMovie') {
       const movieId = sanitizeText(body.movieId, 64);
-      const rating = Number(body.rating);
-      if (!movieId || !Number.isFinite(rating) || rating < 1 || rating > 5) {
+      const isClearing = body.rating === null;
+      const numericRating = isClearing ? null : Number(body.rating);
+
+      if (
+        !movieId ||
+        (!isClearing && (!Number.isFinite(numericRating) || numericRating! < 1 || numericRating! > 5))
+      ) {
         res.status(400).json({ error: 'Informe uma nota entre 1 e 5.' });
         return;
       }
+
       const result = await saveUserMovieRating(
         auth.session.user.userKey,
         movieId,
-        rating
+        numericRating
       );
-      if (!result) {
+      if (!result.ok) {
+        if (result.code === 'AUTHOR_RATING_REQUIRED') {
+          res.status(400).json({
+            error:
+              'Como autor desta indicação, mantenha uma nota de 1 a 5 estrelas (você pode alterá-la quando quiser).',
+          });
+          return;
+        }
         res.status(404).json({ error: 'Filme não encontrado.' });
         return;
       }
-      res.status(200).json(result);
+
+      res.status(200).json({
+        personalRatings: result.personalRatings,
+        movie: result.movie,
+      });
       return;
     }
 
@@ -373,6 +574,47 @@ export async function handleUserActivityRequest(req: ApiRequest, res: ApiRespons
       return;
     }
 
+    if (action === 'addComment') {
+      const movieId = sanitizeText(body.movieId, 64);
+      const text = sanitizeText(body.text, 240);
+      if (!movieId || text.length < 2) {
+        res.status(400).json({ error: 'Escreva um comentário com pelo menos 2 caracteres.' });
+        return;
+      }
+      const updatedMovie = await addMovieComment({
+        movieId,
+        userKey: auth.session.user.userKey,
+        author: auth.session.user.name,
+        text,
+      });
+      if (!updatedMovie) {
+        res.status(404).json({ error: 'Filme não encontrado.' });
+        return;
+      }
+      res.status(201).json({ movie: updatedMovie });
+      return;
+    }
+
+    if (action === 'deleteComment') {
+      const movieId = sanitizeText(body.movieId, 64);
+      const commentId = sanitizeText(body.commentId, 64);
+      if (!movieId || !commentId) {
+        res.status(400).json({ error: 'Comentário ou filme não informado.' });
+        return;
+      }
+      const updatedMovie = await deleteMovieComment({
+        movieId,
+        commentId,
+        userKey: auth.session.user.userKey,
+      });
+      if (!updatedMovie) {
+        res.status(404).json({ error: 'Filme não encontrado.' });
+        return;
+      }
+      res.status(200).json({ movie: updatedMovie });
+      return;
+    }
+
     res.status(400).json({ error: 'Ação inválida.' });
   } catch (err) {
     console.error('[api/user/activity] Erro:', err);
@@ -384,7 +626,7 @@ export async function handleUserActivityRequest(req: ApiRequest, res: ApiRespons
 }
 
 // ---------------------------------------------------------------------------
-// Endpoints de filmes, avaliações e chat
+// Endpoints de filmes, edição, exclusão, avaliações e chat
 // ---------------------------------------------------------------------------
 
 export async function handleMoviesRequest(req: ApiRequest, res: ApiResponse): Promise<void> {
@@ -405,63 +647,38 @@ export async function handleMoviesRequest(req: ApiRequest, res: ApiResponse): Pr
         res.status(401).json({ error: 'Faça login para indicar um filme ao catálogo.' });
         return;
       }
+      if (!checkRateLimit(`movies:write:${auth.session.user.userKey}`, 20, 60_000)) {
+        res.status(429).json({
+          error: 'Muitas indicações seguidas. Aguarde alguns segundos antes de tentar novamente.',
+        });
+        return;
+      }
 
       const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<
         string,
         unknown
       >;
-      const title = sanitizeText(body.title, 100);
-      const director = sanitizeText(body.director, 80);
-      const synopsis = sanitizeText(body.synopsis, 400);
-      const recommendationNote = sanitizeText(body.recommendationNote, 240);
-      const genre = body.genre as MovieGenre;
-      const year = Number(body.year);
-      const durationMinutes = Number(body.durationMinutes);
-      const rating = Number(body.rating);
-      const safePoster = sanitizePosterUrl(body.posterUrl);
-      const recommendedBy = auth.session.user.name;
-      const clientId = auth.session.user.userKey;
-
-      if (title.length < 2 || director.length < 2 || synopsis.length < 10) {
-        res.status(400).json({ error: 'Preencha título, direção e sinopse do filme.' });
+      const validated = validateMoviePayload(body);
+      if (!validated.ok) {
+        res.status(400).json({ error: validated.error });
         return;
       }
 
-      if (!VALID_GENRES.includes(genre)) {
-        res.status(400).json({ error: 'Gênero inválido.' });
-        return;
-      }
-
-      if (!Number.isFinite(year) || year < 1900 || year > 2030) {
-        res.status(400).json({ error: 'Informe um ano válido entre 1900 e 2030.' });
-        return;
-      }
-
-      const safeDuration =
-        Number.isFinite(durationMinutes) && durationMinutes >= 30 && durationMinutes <= 400
-          ? Math.round(durationMinutes)
-          : 110;
-      const safeRating =
-        Number.isFinite(rating) && rating >= 1 && rating <= 5
-          ? Math.round(rating * 10) / 10
-          : 4.5;
-
-      const newMovie = await createMovie({
-        title,
-        director,
-        year: Math.round(year),
-        durationMinutes: safeDuration,
-        genre,
-        synopsis,
-        recommendedBy,
-        recommendationNote:
-          recommendationNote || 'Indicado diretamente pela comunidade CineRoda.',
-        posterUrl: safePoster,
-        rating: safeRating,
-        clientId,
+      const result = await createMovie({
+        ...validated.data,
+        recommendedBy: auth.session.user.name,
+        clientId: auth.session.user.userKey,
       });
 
-      res.status(201).json({ movie: newMovie });
+      if (!result.ok) {
+        res.status(409).json({
+          error: 'Este filme já foi indicado no catálogo para esse ano.',
+          existingMovieId: result.existingMovieId,
+        });
+        return;
+      }
+
+      res.status(201).json({ movie: result.movie });
       return;
     }
 
@@ -470,6 +687,85 @@ export async function handleMoviesRequest(req: ApiRequest, res: ApiResponse): Pr
     console.error('[api/movies] Erro SQL:', err);
     res.status(500).json({
       error: 'Erro interno ao processar filmes no banco.',
+      details: formatDbError(err),
+    });
+  }
+}
+
+export async function handleMovieByIdRequest(req: ApiRequest, res: ApiResponse): Promise<void> {
+  try {
+    const rawId = req.params?.id ?? req.query?.id;
+    const movieId = sanitizeText(Array.isArray(rawId) ? rawId[0] : rawId, 64);
+    if (!movieId) {
+      res.status(400).json({ error: 'Identificador do filme é obrigatório.' });
+      return;
+    }
+
+    const auth = await resolveAuthenticatedSession(req);
+    if (!auth.csrfOk) {
+      res.status(403).json({ error: 'Requisição bloqueada por proteção CSRF.' });
+      return;
+    }
+    if (!auth.session) {
+      res.status(401).json({ error: 'Faça login para gerenciar esta indicação.' });
+      return;
+    }
+    if (!checkRateLimit(`movies:write:${auth.session.user.userKey}`, 20, 60_000)) {
+      res.status(429).json({ error: 'Muitas ações seguidas. Aguarde alguns segundos.' });
+      return;
+    }
+
+    if (req.method === 'PATCH') {
+      const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<
+        string,
+        unknown
+      >;
+      const validated = validateMoviePayload(body);
+      if (!validated.ok) {
+        res.status(400).json({ error: validated.error });
+        return;
+      }
+
+      const result = await updateMovie(movieId, auth.session.user.userKey, validated.data);
+      if (!result.ok) {
+        if (result.code === 'NOT_FOUND') {
+          res.status(404).json({ error: 'Filme não encontrado.' });
+          return;
+        }
+        if (result.code === 'FORBIDDEN') {
+          res.status(403).json({ error: 'Apenas quem indicou este filme pode editá-lo.' });
+          return;
+        }
+        res.status(409).json({
+          error: 'Já existe outro filme com esse título e ano no catálogo.',
+          existingMovieId: result.existingMovieId,
+        });
+        return;
+      }
+
+      res.status(200).json({ movie: result.movie });
+      return;
+    }
+
+    if (req.method === 'DELETE') {
+      const result = await deleteMovie(movieId, auth.session.user.userKey);
+      if (!result.ok) {
+        if (result.code === 'NOT_FOUND') {
+          res.status(404).json({ error: 'Filme não encontrado.' });
+          return;
+        }
+        res.status(403).json({ error: 'Apenas quem indicou este filme pode excluí-lo.' });
+        return;
+      }
+      res.status(200).json({ ok: true, deletedId: movieId });
+      return;
+    }
+
+    res.status(405).json({ error: 'Método não permitido.' });
+  } catch (err) {
+    console.error('[api/movies/:id] Erro:', err);
+    res.status(500).json({
+      error: 'Erro interno ao atualizar ou remover o filme.',
       details: formatDbError(err),
     });
   }
@@ -539,6 +835,10 @@ export async function handleChatRequest(req: ApiRequest, res: ApiResponse): Prom
         res.status(401).json({ error: 'Faça login para enviar mensagens no chat.' });
         return;
       }
+      if (!checkRateLimit(`chat:${auth.session.user.userKey}`, 30, 60_000)) {
+        res.status(429).json({ error: 'Muitas mensagens em sequência. Aguarde alguns segundos.' });
+        return;
+      }
 
       const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<
         string,
@@ -556,12 +856,51 @@ export async function handleChatRequest(req: ApiRequest, res: ApiResponse): Prom
 
       const message = await createChatMessage({
         clientMsgId: clientMsgId || undefined,
+        userKey: auth.session.user.userKey,
         author,
         text,
         attachedMovieId: attachedMovieId || undefined,
       });
 
       res.status(201).json({ message });
+      return;
+    }
+
+    if (req.method === 'DELETE') {
+      const auth = await resolveAuthenticatedSession(req);
+      if (!auth.csrfOk) {
+        res.status(403).json({ error: 'Requisição bloqueada por proteção CSRF.' });
+        return;
+      }
+      if (!auth.session) {
+        res.status(401).json({ error: 'Faça login para excluir sua mensagem.' });
+        return;
+      }
+      if (!checkRateLimit(`chat:${auth.session.user.userKey}`, 30, 60_000)) {
+        res.status(429).json({ error: 'Muitas ações seguidas. Aguarde alguns segundos.' });
+        return;
+      }
+
+      const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<
+        string,
+        unknown
+      >;
+      const rawId = req.query?.id ?? body.id;
+      const messageId = sanitizeText(Array.isArray(rawId) ? rawId[0] : rawId, 64);
+      if (!messageId) {
+        res.status(400).json({ error: 'Identificador da mensagem é obrigatório.' });
+        return;
+      }
+
+      const deleted = await deleteChatMessage(messageId, auth.session.user.userKey);
+      if (!deleted) {
+        res.status(404).json({
+          error: 'Mensagem não encontrada ou você não tem permissão para excluí-la.',
+        });
+        return;
+      }
+
+      res.status(200).json({ ok: true, deletedId: messageId });
       return;
     }
 

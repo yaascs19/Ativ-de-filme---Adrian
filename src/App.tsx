@@ -43,6 +43,7 @@ export default function App() {
 
   const [selectedMovieId, setSelectedMovieId] = useState<string | null>(null);
   const [isRecommendOpen, setIsRecommendOpen] = useState<boolean>(false);
+  const [editingMovie, setEditingMovie] = useState<MovieItem | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
   const [authPromptReason, setAuthPromptReason] = useState<string>('');
   const [attachedMovieId, setAttachedMovieId] = useState<string | null>(null);
@@ -149,6 +150,7 @@ export default function App() {
     setAuthUser(null);
     setSessionToken(null);
     setIsRecommendOpen(false);
+    setEditingMovie(null);
     setPrefs((prev) => ({
       ...prev,
       userName: '',
@@ -216,9 +218,23 @@ export default function App() {
     };
   }, [syncCatalogAndChat]);
 
+  const handleProfileUpdated = useCallback(
+    (updatedUser: AuthUser) => {
+      setAuthUser(updatedUser);
+      setPrefs((prev) => ({ ...prev, userName: updatedUser.name }));
+      syncCatalogAndChat(false);
+    },
+    [syncCatalogAndChat]
+  );
+
   const activeWatchlistIds = authUser ? prefs.watchlistIds : [];
   const activePersonalRatings = authUser ? prefs.personalRatings : {};
   const activeUserKey = authUser?.userKey ?? '';
+
+  const authoredMoviesCount = useMemo(() => {
+    if (!activeUserKey) return 0;
+    return movies.filter((m) => m.ownerUserKey === activeUserKey).length;
+  }, [movies, activeUserKey]);
 
   // Filtro e ordenação do catálogo
   const visibleMovies = useMemo(() => {
@@ -329,19 +345,22 @@ export default function App() {
   );
 
   const handleRateMovie = useCallback(
-    async (movieId: string, rating: number) => {
+    async (movieId: string, rating: number | null) => {
       if (!authUser) {
         openLoginPrompt('Entre ou crie uma conta para salvar suas notas nos filmes.');
         return;
       }
 
-      setPrefs((prev) => ({
-        ...prev,
-        personalRatings: {
-          ...prev.personalRatings,
-          [movieId]: rating,
-        },
-      }));
+      const previousRatings = prefs.personalRatings;
+      setPrefs((prev) => {
+        const next = { ...prev.personalRatings };
+        if (rating === null) {
+          delete next[movieId];
+        } else {
+          next[movieId] = rating;
+        }
+        return { ...prev, personalRatings: next };
+      });
 
       try {
         const res = await fetch('/api/user/activity', {
@@ -355,27 +374,30 @@ export default function App() {
           body: JSON.stringify({ action: 'rateMovie', movieId, rating }),
         });
         if (res.status === 401) {
+          setPrefs((prev) => ({ ...prev, personalRatings: previousRatings }));
           openLoginPrompt('Sua sessão expirou. Entre novamente para salvar sua nota.');
           return;
         }
-        if (res.ok) {
-          const data = (await res.json()) as {
-            personalRatings?: Record<string, number>;
-            movie?: MovieItem;
-          };
-          if (data.personalRatings) {
-            setPrefs((prev) => ({ ...prev, personalRatings: data.personalRatings! }));
-          }
-          if (data.movie) {
-            const updated = data.movie;
-            setMovies((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
-          }
+        if (!res.ok) {
+          setPrefs((prev) => ({ ...prev, personalRatings: previousRatings }));
+          return;
+        }
+        const data = (await res.json()) as {
+          personalRatings?: Record<string, number>;
+          movie?: MovieItem;
+        };
+        if (data.personalRatings) {
+          setPrefs((prev) => ({ ...prev, personalRatings: data.personalRatings! }));
+        }
+        if (data.movie) {
+          const updated = data.movie;
+          setMovies((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
         }
       } catch {
-        // Falha silenciosa em desconexão momentânea
+        setPrefs((prev) => ({ ...prev, personalRatings: previousRatings }));
       }
     },
-    [authUser, authHeaders, openLoginPrompt]
+    [authUser, authHeaders, openLoginPrompt, prefs.personalRatings]
   );
 
   const handleChangePalette = useCallback(
@@ -433,6 +455,64 @@ export default function App() {
     }
   };
 
+  const handleAddComment = async (movieId: string, text: string): Promise<boolean> => {
+    if (!authUser) {
+      openLoginPrompt('Entre na sua conta para comentar sobre este filme.');
+      return false;
+    }
+
+    try {
+      const res = await fetch('/api/user/activity', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'CineRoda',
+          ...authHeaders,
+        },
+        body: JSON.stringify({ action: 'addComment', movieId, text }),
+      });
+      if (res.status === 401) {
+        openLoginPrompt('Sua sessão expirou. Entre novamente para comentar.');
+        return false;
+      }
+      if (!res.ok) return false;
+      const data = (await res.json()) as { movie?: MovieItem };
+      if (data.movie) {
+        const updated = data.movie;
+        setMovies((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const handleDeleteComment = async (movieId: string, commentId: string) => {
+    if (!authUser) return;
+
+    try {
+      const res = await fetch('/api/user/activity', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'CineRoda',
+          ...authHeaders,
+        },
+        body: JSON.stringify({ action: 'deleteComment', movieId, commentId }),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as { movie?: MovieItem };
+      if (data.movie) {
+        const updated = data.movie;
+        setMovies((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+      }
+    } catch {
+      // Falha silenciosa
+    }
+  };
+
   const handleSendChatMessage = async (
     text: string,
     movieIdToAttach?: string
@@ -476,16 +556,81 @@ export default function App() {
     }
   };
 
+  const handleDeleteChatMessage = async (messageId: string) => {
+    if (!authUser) return;
+    try {
+      const res = await fetch(`/api/chat?id=${encodeURIComponent(messageId)}`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: {
+          'X-Requested-With': 'CineRoda',
+          ...authHeaders,
+        },
+      });
+      if (res.ok) {
+        setMessages((prev) => prev.filter((m) => m.id !== messageId));
+      }
+    } catch {
+      // Falha silenciosa
+    }
+  };
+
   const handleOpenRecommendModal = useCallback(() => {
     if (!authUser) {
       openLoginPrompt('Entre ou crie uma conta para indicar um novo filme ao catálogo.');
       return;
     }
+    setEditingMovie(null);
     setIsRecommendOpen(true);
   }, [authUser, openLoginPrompt]);
 
+  const handleStartEditMovie = useCallback((movie: MovieItem) => {
+    setSelectedMovieId(null);
+    setEditingMovie(movie);
+    setIsRecommendOpen(true);
+  }, []);
+
+  const handleDeleteMovie = useCallback(
+    async (movieId: string) => {
+      if (!authUser) return;
+      try {
+        const res = await fetch(`/api/movies/${encodeURIComponent(movieId)}`, {
+          method: 'DELETE',
+          credentials: 'include',
+          headers: {
+            'X-Requested-With': 'CineRoda',
+            ...authHeaders,
+          },
+        });
+        if (!res.ok) return;
+        setMovies((prev) => prev.filter((m) => m.id !== movieId));
+        setPrefs((prev) => {
+          const nextRatings = { ...prev.personalRatings };
+          delete nextRatings[movieId];
+          return {
+            ...prev,
+            watchlistIds: prev.watchlistIds.filter((id) => id !== movieId),
+            personalRatings: nextRatings,
+          };
+        });
+        setSelectedMovieId((curr) => (curr === movieId ? null : curr));
+        setAttachedMovieId((curr) => (curr === movieId ? null : curr));
+      } catch {
+        // Falha silenciosa
+      }
+    },
+    [authUser, authHeaders]
+  );
+
   const handleMovieCreated = async (newMovie: MovieItem, shareInChat: boolean) => {
     setMovies((prev) => (prev.some((m) => m.id === newMovie.id) ? prev : [newMovie, ...prev]));
+    setPrefs((prev) => ({
+      ...prev,
+      personalRatings: {
+        ...prev.personalRatings,
+        [newMovie.id]: Math.round(newMovie.authorRating ?? newMovie.rating),
+      },
+    }));
 
     if (shareInChat && authUser) {
       await fetch('/api/chat', {
@@ -505,6 +650,17 @@ export default function App() {
       syncCatalogAndChat(false);
     }
   };
+
+  const handleMovieUpdated = useCallback((updatedMovie: MovieItem) => {
+    setMovies((prev) => prev.map((m) => (m.id === updatedMovie.id ? updatedMovie : m)));
+    setPrefs((prev) => ({
+      ...prev,
+      personalRatings: {
+        ...prev.personalRatings,
+        [updatedMovie.id]: Math.round(updatedMovie.authorRating ?? updatedMovie.rating),
+      },
+    }));
+  }, []);
 
   const handleRecommendInChat = (movie: MovieItem) => {
     if (!authUser) {
@@ -536,6 +692,9 @@ export default function App() {
     !loading &&
     !loadError &&
     featuredMovie !== null;
+
+  const isFilteredListEmpty =
+    activeView === 'lista' && Boolean(authUser) && activeWatchlistIds.length > 0;
 
   return (
     <div className="flex min-h-screen flex-col bg-[var(--cr-canvas)] text-[var(--cr-ink)] transition-colors duration-200">
@@ -594,10 +753,14 @@ export default function App() {
               </div>
 
               <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border-t border-white/10 pt-5">
-                <div className="flex items-center gap-4 text-xs text-slate-300 tabular-nums">
+                <div className="flex flex-wrap items-center gap-3 text-xs text-slate-300 tabular-nums">
                   <span className="inline-flex items-center gap-1.5 font-mono text-sm font-semibold text-white">
                     <Star className="h-4 w-4 fill-[#F59E0B] text-[#F59E0B]" aria-hidden="true" />
                     <span>{featuredMovie.rating.toFixed(1)}/5</span>
+                    <span className="text-xs font-normal text-slate-300">
+                      ({featuredMovie.ratingsCount ?? 1}{' '}
+                      {(featuredMovie.ratingsCount ?? 1) === 1 ? 'avaliação' : 'avaliações'})
+                    </span>
                   </span>
                   <span aria-hidden="true" className="text-white/25">
                     ·
@@ -860,39 +1023,41 @@ export default function App() {
                 <Film className="mx-auto h-8 w-8 text-[var(--cr-ink-muted)]" aria-hidden="true" />
                 <p className="mt-3 text-sm font-semibold text-[var(--cr-ink)]">
                   {activeView === 'lista'
-                    ? authUser
-                      ? 'Sua lista ainda está vazia.'
-                      : 'Entre na sua conta para ver sua lista salva.'
+                    ? !authUser
+                      ? 'Entre na sua conta para ver sua lista salva.'
+                      : isFilteredListEmpty
+                        ? 'Nenhum filme da sua lista corresponde aos filtros atuais.'
+                        : 'Sua lista ainda está vazia.'
                     : 'Nenhum filme encontrado com esses filtros.'}
                 </p>
                 <p className="mt-1 text-xs text-[var(--cr-ink-muted)]">
                   {activeView === 'lista'
-                    ? authUser
-                      ? 'Clique em "Salvar" nos filmes do catálogo para montar sua lista pessoal.'
-                      : 'Com o login, os filmes que você salvar ficam disponíveis em qualquer dispositivo.'
+                    ? !authUser
+                      ? 'Com o login, os filmes que você salvar ficam disponíveis em qualquer dispositivo.'
+                      : isFilteredListEmpty
+                        ? 'Limpe a busca ou troque o gênero selecionado para ver seus filmes salvos.'
+                        : 'Clique em "Salvar" nos filmes do catálogo para montar sua lista pessoal.'
                     : 'Tente limpar a busca ou indique um novo filme para a comunidade.'}
                 </p>
                 <div className="mt-4 flex justify-center gap-3">
-                  {activeView === 'lista' ? (
-                    authUser ? (
-                      <button
-                        type="button"
-                        onClick={() => setActiveView('catalogo')}
-                        className="min-h-[40px] rounded-lg bg-[var(--cr-accent)] px-4 py-2 text-xs font-semibold text-white hover:bg-[var(--cr-accent-hover)] cursor-pointer"
-                      >
-                        Explorar Catálogo
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          openLoginPrompt('Entre para acessar e salvar filmes na sua lista.')
-                        }
-                        className="min-h-[40px] rounded-lg bg-[var(--cr-accent)] px-4 py-2 text-xs font-semibold text-white hover:bg-[var(--cr-accent-hover)] cursor-pointer"
-                      >
-                        Entrar ou criar conta
-                      </button>
-                    )
+                  {activeView === 'lista' && !authUser ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openLoginPrompt('Entre para acessar e salvar filmes na sua lista.')
+                      }
+                      className="min-h-[40px] rounded-lg bg-[var(--cr-accent)] px-4 py-2 text-xs font-semibold text-white hover:bg-[var(--cr-accent-hover)] cursor-pointer"
+                    >
+                      Entrar ou criar conta
+                    </button>
+                  ) : activeView === 'lista' && !isFilteredListEmpty ? (
+                    <button
+                      type="button"
+                      onClick={() => setActiveView('catalogo')}
+                      className="min-h-[40px] rounded-lg bg-[var(--cr-accent)] px-4 py-2 text-xs font-semibold text-white hover:bg-[var(--cr-accent-hover)] cursor-pointer"
+                    >
+                      Explorar Catálogo
+                    </button>
                   ) : (
                     <button
                       type="button"
@@ -944,6 +1109,7 @@ export default function App() {
               attachedMovieId={attachedMovieId}
               onChangeAttachedMovieId={setAttachedMovieId}
               onSendMessage={handleSendChatMessage}
+              onDeleteMessage={handleDeleteChatMessage}
               onSelectMovie={(m) => setSelectedMovieId(m.id)}
               isConnected={isConnected}
             />
@@ -955,6 +1121,7 @@ export default function App() {
 
       <MovieDetailModal
         movie={selectedMovie}
+        authUser={authUser}
         isSaved={selectedMovie ? activeWatchlistIds.includes(selectedMovie.id) : false}
         hasLiked={Boolean(
           selectedMovie && activeUserKey && selectedMovie.likedBy.includes(activeUserKey)
@@ -970,14 +1137,25 @@ export default function App() {
         onEvaluateMovie={handleEvaluateMovie}
         onRateMovie={handleRateMovie}
         onRecommendInChat={handleRecommendInChat}
+        onEditMovie={handleStartEditMovie}
+        onDeleteMovie={handleDeleteMovie}
+        onAddComment={handleAddComment}
+        onDeleteComment={handleDeleteComment}
+        onOpenAuthModal={openLoginPrompt}
       />
 
       <RecommendMovieModal
         isOpen={isRecommendOpen}
         authUser={authUser}
         authHeaders={authHeaders}
-        onClose={() => setIsRecommendOpen(false)}
+        editingMovie={editingMovie}
+        onClose={() => {
+          setIsRecommendOpen(false);
+          setEditingMovie(null);
+        }}
         onMovieCreated={handleMovieCreated}
+        onMovieUpdated={handleMovieUpdated}
+        onOpenExistingMovie={(movieId) => setSelectedMovieId(movieId)}
       />
 
       <AuthModal
@@ -985,13 +1163,16 @@ export default function App() {
         promptReason={authPromptReason}
         currentPalette={prefs.palette}
         authUser={authUser}
+        authHeaders={authHeaders}
         watchlistCount={activeWatchlistIds.length}
         ratingsCount={Object.keys(activePersonalRatings).length}
+        authoredCount={authoredMoviesCount}
         onClose={() => {
           setIsAuthModalOpen(false);
           setAuthPromptReason('');
         }}
         onAuthSuccess={handleAuthSuccess}
+        onProfileUpdated={handleProfileUpdated}
         onLogout={handleLogout}
       />
     </div>

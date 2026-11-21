@@ -13,6 +13,15 @@ export type EvaluationChoice = 'like' | 'dislike';
 
 export type ThemePaletteId = 'cinabrio' | 'cobalto' | 'esmeralda' | 'noturno';
 
+export interface MovieComment {
+  id: string;
+  movieId: string;
+  userKey: string;
+  author: string;
+  text: string;
+  createdAt: number;
+}
+
 export interface MovieItem {
   id: string;
   title: string;
@@ -22,16 +31,21 @@ export interface MovieItem {
   genre: MovieGenre;
   synopsis: string;
   recommendedBy: string;
+  ownerUserKey?: string;
   recommendationNote: string;
   posterUrl: string;
   rating: number;
+  authorRating?: number;
+  ratingsCount: number;
   likedBy: string[];
   dislikedBy: string[];
+  comments: MovieComment[];
   createdAt: number;
 }
 
 export interface ChatMessage {
   id: string;
+  userKey?: string;
   author: string;
   text: string;
   attachedMovieId?: string;

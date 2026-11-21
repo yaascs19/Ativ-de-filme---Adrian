@@ -67,9 +67,12 @@ export function MovieCard({
           <span className="inline-flex items-center gap-1 font-mono font-semibold tabular-nums">
             <Star className="h-3.5 w-3.5 fill-[#F59E0B] text-[#F59E0B]" aria-hidden="true" />
             <span>{movie.rating.toFixed(1)}</span>
+            <span className="text-[11px] font-normal text-white/75">
+              ({movie.ratingsCount ?? 1})
+            </span>
             {personalRating !== undefined && (
-              <span className="text-[11px] font-normal text-white/80">
-                (sua: {personalRating.toFixed(1)})
+              <span className="text-[11px] font-normal text-white/85">
+                · sua: {personalRating.toFixed(1)}
               </span>
             )}
           </span>
