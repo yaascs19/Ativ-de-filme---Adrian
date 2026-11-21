@@ -18,6 +18,7 @@ GO
 -- 1. TABELAS
 -- ============================================================================
 
+IF OBJECT_ID('dbo.ReacoesChat', 'U') IS NOT NULL DROP TABLE dbo.ReacoesChat;
 IF OBJECT_ID('dbo.ComentariosFilmes', 'U') IS NOT NULL DROP TABLE dbo.ComentariosFilmes;
 IF OBJECT_ID('dbo.SessoesUsuarios', 'U') IS NOT NULL DROP TABLE dbo.SessoesUsuarios;
 IF OBJECT_ID('dbo.NotasPessoais', 'U') IS NOT NULL DROP TABLE dbo.NotasPessoais;
@@ -113,11 +114,28 @@ CREATE TABLE dbo.MensagensChat (
     Autor                NVARCHAR(40)      NOT NULL,
     Texto                NVARCHAR(400)     NOT NULL,
     FilmeAnexadoId       INT               NULL,
+    RespostaParaId       NVARCHAR(64)      NULL,
+    RespostaAutor        NVARCHAR(40)      NULL,
+    RespostaTexto        NVARCHAR(120)     NULL,
     CriadoEm             DATETIME2(0)      NOT NULL CONSTRAINT DF_Chat_CriadoEm DEFAULT (SYSUTCDATETIME()),
 
     CONSTRAINT PK_MensagensChat PRIMARY KEY CLUSTERED (Id),
     CONSTRAINT FK_Chat_Filmes FOREIGN KEY (FilmeAnexadoId)
         REFERENCES dbo.Filmes (Id) ON DELETE SET NULL
+);
+GO
+
+CREATE TABLE dbo.ReacoesChat (
+    Id                   INT IDENTITY(1,1) NOT NULL,
+    MensagemId           INT               NOT NULL,
+    IdentificadorUsuario NVARCHAR(64)      NOT NULL,
+    Reacao               NVARCHAR(20)      NOT NULL,
+    CriadoEm             DATETIME2(0)      NOT NULL CONSTRAINT DF_ReacoesChat_CriadoEm DEFAULT (SYSUTCDATETIME()),
+
+    CONSTRAINT PK_ReacoesChat PRIMARY KEY CLUSTERED (Id),
+    CONSTRAINT FK_ReacoesChat_Mensagem FOREIGN KEY (MensagemId)
+        REFERENCES dbo.MensagensChat (Id) ON DELETE CASCADE,
+    CONSTRAINT UQ_ReacoesChat_Usuario_Msg_Tipo UNIQUE (MensagemId, IdentificadorUsuario, Reacao)
 );
 GO
 

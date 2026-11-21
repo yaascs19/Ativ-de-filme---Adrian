@@ -1,6 +1,7 @@
 import {
   addMovieComment,
   AuthUserRecord,
+  ChatReactionKey,
   createChatMessage,
   createMovie,
   deleteChatMessage,
@@ -22,11 +23,13 @@ import {
   sanitizePosterUrl,
   sanitizeText,
   saveUserMovieRating,
+  toggleChatReaction,
   toggleUserWatchlist,
   updateMovie,
   updateUserPalette,
   updateUserProfile,
   UserActivityRecord,
+  VALID_CHAT_REACTIONS,
   VALID_GENRES,
   VALID_PALETTES,
 } from './db.js';
@@ -672,7 +675,7 @@ export async function handleMoviesRequest(req: ApiRequest, res: ApiResponse): Pr
 
       if (!result.ok) {
         res.status(409).json({
-          error: 'Este filme já foi indicado no catálogo para esse ano.',
+          error: 'Este filme já está cadastrado no catálogo.',
           existingMovieId: result.existingMovieId,
         });
         return;
@@ -737,7 +740,7 @@ export async function handleMovieByIdRequest(req: ApiRequest, res: ApiResponse):
           return;
         }
         res.status(409).json({
-          error: 'Já existe outro filme com esse título e ano no catálogo.',
+          error: 'Já existe outro filme com esse título no catálogo.',
           existingMovieId: result.existingMovieId,
         });
         return;
@@ -848,6 +851,7 @@ export async function handleChatRequest(req: ApiRequest, res: ApiResponse): Prom
       const text = sanitizeText(body.text, 400);
       const clientMsgId = sanitizeText(body.id, 64);
       const attachedMovieId = sanitizeText(body.attachedMovieId, 64);
+      const replyToId = sanitizeText(body.replyToId, 64);
 
       if (text.length < 1) {
         res.status(400).json({ error: 'Escreva uma mensagem antes de enviar.' });
@@ -860,9 +864,51 @@ export async function handleChatRequest(req: ApiRequest, res: ApiResponse): Prom
         author,
         text,
         attachedMovieId: attachedMovieId || undefined,
+        replyToId: replyToId || undefined,
       });
 
       res.status(201).json({ message });
+      return;
+    }
+
+    if (req.method === 'PATCH') {
+      const auth = await resolveAuthenticatedSession(req);
+      if (!auth.csrfOk) {
+        res.status(403).json({ error: 'Requisição bloqueada por proteção CSRF.' });
+        return;
+      }
+      if (!auth.session) {
+        res.status(401).json({ error: 'Faça login para reagir às mensagens.' });
+        return;
+      }
+      if (!checkRateLimit(`chat:react:${auth.session.user.userKey}`, 60, 60_000)) {
+        res.status(429).json({ error: 'Muitas reações em sequência. Aguarde alguns segundos.' });
+        return;
+      }
+
+      const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<
+        string,
+        unknown
+      >;
+      const messageId = sanitizeText(body.messageId, 64);
+      const reaction = sanitizeText(body.reaction, 20) as ChatReactionKey;
+
+      if (!messageId || !VALID_CHAT_REACTIONS.includes(reaction)) {
+        res.status(400).json({ error: 'Mensagem ou reação inválida.' });
+        return;
+      }
+
+      const updatedMessage = await toggleChatReaction({
+        messageId,
+        userKey: auth.session.user.userKey,
+        reaction,
+      });
+      if (!updatedMessage) {
+        res.status(404).json({ error: 'Mensagem não encontrada.' });
+        return;
+      }
+
+      res.status(200).json({ message: updatedMessage });
       return;
     }
 

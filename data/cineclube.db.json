@@ -22,7 +22,7 @@
       ],
       "dislikedBy": [],
       "comments": [],
-      "createdAt": 1795257143758
+      "createdAt": 1795257984870
     },
     {
       "id": "mov-pequeno-principe",
@@ -45,7 +45,7 @@
       ],
       "dislikedBy": [],
       "comments": [],
-      "createdAt": 1795258943758
+      "createdAt": 1795259784870
     },
     {
       "id": "mov-homem-aranha",
@@ -68,7 +68,7 @@
       ],
       "dislikedBy": [],
       "comments": [],
-      "createdAt": 1795260743758
+      "createdAt": 1795261584870
     },
     {
       "id": "mov-sing",
@@ -93,7 +93,7 @@
         "seed-6"
       ],
       "comments": [],
-      "createdAt": 1795262543758
+      "createdAt": 1795263384870
     },
     {
       "id": "mov-wicked",
@@ -116,7 +116,7 @@
       ],
       "dislikedBy": [],
       "comments": [],
-      "createdAt": 1795264343758
+      "createdAt": 1795265184870
     },
     {
       "id": "mov-minha-melhor-amiga",
@@ -138,7 +138,7 @@
       ],
       "dislikedBy": [],
       "comments": [],
-      "createdAt": 1795266143758
+      "createdAt": 1795266984870
     }
   ],
   "messages": [
@@ -147,21 +147,48 @@
       "author": "Marina Silva",
       "text": "Se você quer um romance para chorar de verdade, assista Como Eu Era Antes de Você!",
       "attachedMovieId": "mov-como-eu-era",
-      "createdAt": 1795266443758
+      "reactions": {
+        "concordo": [
+          "seed-2",
+          "seed-4"
+        ],
+        "querover": [
+          "seed-3"
+        ],
+        "amei": []
+      },
+      "createdAt": 1795267284870
     },
     {
       "id": "msg-seed-2",
       "author": "Gabriel Rocha",
       "text": "Concordo! E quem curte musical não pode deixar de ver Wicked.",
       "attachedMovieId": "mov-wicked",
-      "createdAt": 1795267103758
+      "reactions": {
+        "concordo": [
+          "seed-1"
+        ],
+        "querover": [],
+        "amei": [
+          "seed-5"
+        ]
+      },
+      "createdAt": 1795267944870
     },
     {
       "id": "msg-seed-3",
       "author": "Beatriz Costa",
       "text": "Alguém já assistiu Homem-Aranha: Um Novo Dia ou quer indicar outro filme de ação?",
       "attachedMovieId": "mov-homem-aranha",
-      "createdAt": 1795267643758
+      "reactions": {
+        "concordo": [],
+        "querover": [
+          "seed-1",
+          "seed-4"
+        ],
+        "amei": []
+      },
+      "createdAt": 1795268484870
     }
   ],
   "users": [],

@@ -64,6 +64,10 @@ async function startServer() {
     await handleChatRequest(req, res);
   });
 
+  app.patch('/api/chat', async (req: Request, res: Response) => {
+    await handleChatRequest(req, res);
+  });
+
   app.delete('/api/chat', async (req: Request, res: Response) => {
     await handleChatRequest(req, res);
   });

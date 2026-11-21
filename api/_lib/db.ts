@@ -52,12 +52,28 @@ export interface MovieRecord {
   createdAt: number;
 }
 
+export type ChatReactionKey = 'concordo' | 'querover' | 'amei';
+
+export const VALID_CHAT_REACTIONS: ChatReactionKey[] = [
+  'concordo',
+  'querover',
+  'amei',
+];
+
+export interface ChatReplyPreview {
+  id: string;
+  author: string;
+  text: string;
+}
+
 export interface ChatMessageRecord {
   id: string;
   userKey?: string;
   author: string;
   text: string;
   attachedMovieId?: string;
+  replyTo?: ChatReplyPreview;
+  reactions: Record<ChatReactionKey, string[]>;
   createdAt: number;
 }
 
@@ -129,8 +145,9 @@ export function normalizeTitleKey(title: string): string {
   return title
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .trim()
     .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
     .replace(/\s+/g, ' ');
 }
 
@@ -367,6 +384,36 @@ async function ensureAuthSchema(pool: sql.ConnectionPool): Promise<void> {
     BEGIN
       ALTER TABLE dbo.MensagensChat ADD IdentificadorUsuario NVARCHAR(64) NULL;
     END;
+
+    IF COL_LENGTH('dbo.MensagensChat', 'RespostaParaId') IS NULL
+    BEGIN
+      ALTER TABLE dbo.MensagensChat ADD RespostaParaId NVARCHAR(64) NULL;
+    END;
+
+    IF COL_LENGTH('dbo.MensagensChat', 'RespostaAutor') IS NULL
+    BEGIN
+      ALTER TABLE dbo.MensagensChat ADD RespostaAutor NVARCHAR(40) NULL;
+    END;
+
+    IF COL_LENGTH('dbo.MensagensChat', 'RespostaTexto') IS NULL
+    BEGIN
+      ALTER TABLE dbo.MensagensChat ADD RespostaTexto NVARCHAR(120) NULL;
+    END;
+
+    IF OBJECT_ID('dbo.ReacoesChat', 'U') IS NULL
+    BEGIN
+      CREATE TABLE dbo.ReacoesChat (
+        Id                   INT IDENTITY(1,1) NOT NULL,
+        MensagemId           INT               NOT NULL,
+        IdentificadorUsuario NVARCHAR(64)      NOT NULL,
+        Reacao               NVARCHAR(20)      NOT NULL,
+        CriadoEm             DATETIME2(0)      NOT NULL CONSTRAINT DF_ReacoesChat_CriadoEm DEFAULT (SYSUTCDATETIME()),
+        CONSTRAINT PK_ReacoesChat PRIMARY KEY CLUSTERED (Id),
+        CONSTRAINT FK_ReacoesChat_Mensagem FOREIGN KEY (MensagemId)
+          REFERENCES dbo.MensagensChat (Id) ON DELETE CASCADE,
+        CONSTRAINT UQ_ReacoesChat_Usuario_Msg_Tipo UNIQUE (MensagemId, IdentificadorUsuario, Reacao)
+      );
+    END;
   `);
 
   await pool.request().query(`
@@ -580,6 +627,7 @@ function createSeedDatabase(): LocalDatabaseSchema {
         author: 'Marina Silva',
         text: 'Se você quer um romance para chorar de verdade, assista Como Eu Era Antes de Você!',
         attachedMovieId: 'mov-como-eu-era',
+        reactions: { concordo: ['seed-2', 'seed-4'], querover: ['seed-3'], amei: [] },
         createdAt: now - 1000 * 60 * 25,
       },
       {
@@ -587,6 +635,7 @@ function createSeedDatabase(): LocalDatabaseSchema {
         author: 'Gabriel Rocha',
         text: 'Concordo! E quem curte musical não pode deixar de ver Wicked.',
         attachedMovieId: 'mov-wicked',
+        reactions: { concordo: ['seed-1'], querover: [], amei: ['seed-5'] },
         createdAt: now - 1000 * 60 * 14,
       },
       {
@@ -594,6 +643,7 @@ function createSeedDatabase(): LocalDatabaseSchema {
         author: 'Beatriz Costa',
         text: 'Alguém já assistiu Homem-Aranha: Um Novo Dia ou quer indicar outro filme de ação?',
         attachedMovieId: 'mov-homem-aranha',
+        reactions: { concordo: [], querover: ['seed-1', 'seed-4'], amei: [] },
         createdAt: now - 1000 * 60 * 5,
       },
     ],
@@ -655,7 +705,14 @@ function loadLocalDb(): LocalDatabaseSchema {
 
     return {
       movies: parsed.movies.map((m) => enrichLocalMovie(m, personalRatings, comments)),
-      messages: parsed.messages,
+      messages: parsed.messages.map((msg) => ({
+        ...msg,
+        reactions: {
+          concordo: Array.isArray(msg.reactions?.concordo) ? msg.reactions.concordo : [],
+          querover: Array.isArray(msg.reactions?.querover) ? msg.reactions.querover : [],
+          amei: Array.isArray(msg.reactions?.amei) ? msg.reactions.amei : [],
+        },
+      })),
       users: Array.isArray(parsed.users) ? parsed.users : [],
       sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
       watchlists:
@@ -725,7 +782,16 @@ interface SqlChatRow {
   Autor: string;
   Texto: string;
   FilmeAnexadoId: number | null;
+  RespostaParaId?: string | null;
+  RespostaAutor?: string | null;
+  RespostaTexto?: string | null;
   CriadoEm: Date;
+}
+
+interface SqlChatReactionRow {
+  MensagemId: number;
+  IdentificadorUsuario: string;
+  Reacao: string;
 }
 
 interface SqlUserRow {
@@ -1712,9 +1778,7 @@ export async function createMovie(
   if (!isSqlServerConfigured()) {
     const db = loadLocalDb();
     const duplicate = db.movies.find(
-      (m) =>
-        normalizeTitleKey(m.title) === normalizedNewTitle &&
-        Math.abs(m.year - input.year) <= 1
+      (m) => normalizeTitleKey(m.title) === normalizedNewTitle
     );
     if (duplicate) {
       return { ok: false, code: 'DUPLICATE_MOVIE', existingMovieId: duplicate.id };
@@ -1754,13 +1818,11 @@ export async function createMovie(
 
   const existingMoviesRes = await pool
     .request()
-    .query<{ Id: number; Titulo: string; AnoLancamento: number }>(
-      `SELECT Id, Titulo, AnoLancamento FROM dbo.Filmes`
+    .query<{ Id: number; Titulo: string }>(
+      `SELECT Id, Titulo FROM dbo.Filmes`
     );
   const duplicate = existingMoviesRes.recordset.find(
-    (m) =>
-      normalizeTitleKey(m.Titulo) === normalizedNewTitle &&
-      Math.abs(m.AnoLancamento - input.year) <= 1
+    (m) => normalizeTitleKey(m.Titulo) === normalizedNewTitle
   );
   if (duplicate) {
     return { ok: false, code: 'DUPLICATE_MOVIE', existingMovieId: String(duplicate.Id) };
@@ -1846,10 +1908,7 @@ export async function updateMovie(
     }
 
     const duplicate = db.movies.find(
-      (m) =>
-        m.id !== movieId &&
-        normalizeTitleKey(m.title) === normalizedTitle &&
-        Math.abs(m.year - input.year) <= 1
+      (m) => m.id !== movieId && normalizeTitleKey(m.title) === normalizedTitle
     );
     if (duplicate) {
       return { ok: false, code: 'DUPLICATE_MOVIE', existingMovieId: duplicate.id };
@@ -1897,13 +1956,11 @@ export async function updateMovie(
   const otherMoviesRes = await pool
     .request()
     .input('Id', sql.Int, numericId)
-    .query<{ Id: number; Titulo: string; AnoLancamento: number }>(
-      `SELECT Id, Titulo, AnoLancamento FROM dbo.Filmes WHERE Id <> @Id`
+    .query<{ Id: number; Titulo: string }>(
+      `SELECT Id, Titulo FROM dbo.Filmes WHERE Id <> @Id`
     );
   const duplicate = otherMoviesRes.recordset.find(
-    (m) =>
-      normalizeTitleKey(m.Titulo) === normalizedTitle &&
-      Math.abs(m.AnoLancamento - input.year) <= 1
+    (m) => normalizeTitleKey(m.Titulo) === normalizedTitle
   );
   if (duplicate) {
     return { ok: false, code: 'DUPLICATE_MOVIE', existingMovieId: String(duplicate.Id) };
@@ -2294,6 +2351,44 @@ export async function evaluateMovie(
   )[0];
 }
 
+function emptyChatReactions(): Record<ChatReactionKey, string[]> {
+  return { concordo: [], querover: [], amei: [] };
+}
+
+function mapSqlChatMessages(
+  rows: SqlChatRow[],
+  reactionRows: SqlChatReactionRow[] = []
+): ChatMessageRecord[] {
+  const reactionsByMsg = new Map<number, Record<ChatReactionKey, string[]>>();
+  for (const r of reactionRows) {
+    if (!VALID_CHAT_REACTIONS.includes(r.Reacao as ChatReactionKey)) continue;
+    const key = r.Reacao as ChatReactionKey;
+    const map = reactionsByMsg.get(r.MensagemId) ?? emptyChatReactions();
+    if (!map[key].includes(r.IdentificadorUsuario)) {
+      map[key].push(r.IdentificadorUsuario);
+    }
+    reactionsByMsg.set(r.MensagemId, map);
+  }
+
+  return rows.map((row) => ({
+    id: String(row.Id),
+    userKey: row.IdentificadorUsuario || undefined,
+    author: row.Autor,
+    text: row.Texto,
+    attachedMovieId: row.FilmeAnexadoId ? String(row.FilmeAnexadoId) : undefined,
+    replyTo:
+      row.RespostaParaId && row.RespostaAutor && row.RespostaTexto
+        ? {
+            id: row.RespostaParaId,
+            author: row.RespostaAutor,
+            text: row.RespostaTexto,
+          }
+        : undefined,
+    reactions: reactionsByMsg.get(row.Id) ?? emptyChatReactions(),
+    createdAt: new Date(row.CriadoEm).getTime(),
+  }));
+}
+
 export async function listChatMessages(): Promise<ChatMessageRecord[]> {
   if (!isSqlServerConfigured()) {
     return loadLocalDb().messages;
@@ -2302,20 +2397,20 @@ export async function listChatMessages(): Promise<ChatMessageRecord[]> {
   const pool = await getSqlPool();
   await ensureAuthSchema(pool);
 
-  const res = await pool.request().query<SqlChatRow>(`
-    SELECT TOP 100 Id, IdentificadorUsuario, Autor, Texto, FilmeAnexadoId, CriadoEm
-    FROM dbo.MensagensChat
-    ORDER BY CriadoEm ASC, Id ASC
-  `);
+  const [msgsRes, reactionsRes] = await Promise.all([
+    pool.request().query<SqlChatRow>(`
+      SELECT TOP 100 Id, IdentificadorUsuario, Autor, Texto, FilmeAnexadoId,
+             RespostaParaId, RespostaAutor, RespostaTexto, CriadoEm
+      FROM dbo.MensagensChat
+      ORDER BY CriadoEm ASC, Id ASC
+    `),
+    pool.request().query<SqlChatReactionRow>(`
+      SELECT MensagemId, IdentificadorUsuario, Reacao
+      FROM dbo.ReacoesChat
+    `),
+  ]);
 
-  return res.recordset.map((row) => ({
-    id: String(row.Id),
-    userKey: row.IdentificadorUsuario || undefined,
-    author: row.Autor,
-    text: row.Texto,
-    attachedMovieId: row.FilmeAnexadoId ? String(row.FilmeAnexadoId) : undefined,
-    createdAt: new Date(row.CriadoEm).getTime(),
-  }));
+  return mapSqlChatMessages(msgsRes.recordset, reactionsRes.recordset);
 }
 
 export async function createChatMessage(input: {
@@ -2324,6 +2419,7 @@ export async function createChatMessage(input: {
   author: string;
   text: string;
   attachedMovieId?: string;
+  replyToId?: string;
 }): Promise<ChatMessageRecord> {
   if (!isSqlServerConfigured()) {
     const db = loadLocalDb();
@@ -2337,12 +2433,26 @@ export async function createChatMessage(input: {
         ? input.attachedMovieId
         : undefined;
 
+    let replyTo: ChatReplyPreview | undefined;
+    if (input.replyToId) {
+      const parent = db.messages.find((m) => m.id === input.replyToId);
+      if (parent) {
+        replyTo = {
+          id: parent.id,
+          author: parent.author,
+          text: parent.text.slice(0, 120),
+        };
+      }
+    }
+
     const newMsg: ChatMessageRecord = {
       id: input.clientMsgId || `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       userKey: input.userKey,
       author: input.author,
       text: input.text,
       attachedMovieId: validMovieId,
+      replyTo,
+      reactions: emptyChatReactions(),
       createdAt: Date.now(),
     };
 
@@ -2368,27 +2478,135 @@ export async function createChatMessage(input: {
     }
   }
 
+  let replyIdStr: string | null = null;
+  let replyAuthor: string | null = null;
+  let replyText: string | null = null;
+  if (input.replyToId) {
+    const parsedReplyId = Number(input.replyToId);
+    if (Number.isInteger(parsedReplyId) && parsedReplyId > 0) {
+      const parentRes = await pool
+        .request()
+        .input('Id', sql.Int, parsedReplyId)
+        .query<{ Id: number; Autor: string; Texto: string }>(
+          `SELECT Id, Autor, Texto FROM dbo.MensagensChat WHERE Id = @Id`
+        );
+      const parent = parentRes.recordset[0];
+      if (parent) {
+        replyIdStr = String(parent.Id);
+        replyAuthor = parent.Autor.slice(0, 40);
+        replyText = parent.Texto.slice(0, 120);
+      }
+    }
+  }
+
   const insertRes = await pool
     .request()
     .input('Usuario', sql.NVarChar(64), input.userKey)
     .input('Autor', sql.NVarChar(40), input.author)
     .input('Texto', sql.NVarChar(400), input.text)
     .input('FilmeAnexadoId', sql.Int, attachedInt)
+    .input('RespostaParaId', sql.NVarChar(64), replyIdStr)
+    .input('RespostaAutor', sql.NVarChar(40), replyAuthor)
+    .input('RespostaTexto', sql.NVarChar(120), replyText)
     .query<SqlChatRow>(`
-      INSERT INTO dbo.MensagensChat (IdentificadorUsuario, Autor, Texto, FilmeAnexadoId)
+      INSERT INTO dbo.MensagensChat (
+        IdentificadorUsuario, Autor, Texto, FilmeAnexadoId,
+        RespostaParaId, RespostaAutor, RespostaTexto
+      )
       OUTPUT INSERTED.*
-      VALUES (@Usuario, @Autor, @Texto, @FilmeAnexadoId)
+      VALUES (
+        @Usuario, @Autor, @Texto, @FilmeAnexadoId,
+        @RespostaParaId, @RespostaAutor, @RespostaTexto
+      )
     `);
 
-  const created = insertRes.recordset[0];
-  return {
-    id: String(created.Id),
-    userKey: created.IdentificadorUsuario || undefined,
-    author: created.Autor,
-    text: created.Texto,
-    attachedMovieId: created.FilmeAnexadoId ? String(created.FilmeAnexadoId) : undefined,
-    createdAt: new Date(created.CriadoEm).getTime(),
-  };
+  return mapSqlChatMessages([insertRes.recordset[0]], [])[0];
+}
+
+export async function toggleChatReaction(input: {
+  messageId: string;
+  userKey: string;
+  reaction: ChatReactionKey;
+}): Promise<ChatMessageRecord | null> {
+  if (!isSqlServerConfigured()) {
+    const db = loadLocalDb();
+    const index = db.messages.findIndex((m) => m.id === input.messageId);
+    if (index === -1) return null;
+
+    const target = db.messages[index];
+    const currentList = target.reactions[input.reaction] ?? [];
+    const exists = currentList.includes(input.userKey);
+    const nextList = exists
+      ? currentList.filter((u) => u !== input.userKey)
+      : [...currentList, input.userKey];
+
+    const updated: ChatMessageRecord = {
+      ...target,
+      reactions: {
+        ...target.reactions,
+        [input.reaction]: nextList,
+      },
+    };
+    db.messages[index] = updated;
+    saveLocalDb(db);
+    return updated;
+  }
+
+  const numericId = Number(input.messageId);
+  if (!Number.isInteger(numericId) || numericId <= 0) return null;
+
+  const pool = await getSqlPool();
+  await ensureAuthSchema(pool);
+
+  const msgRes = await pool
+    .request()
+    .input('Id', sql.Int, numericId)
+    .query<SqlChatRow>(`SELECT * FROM dbo.MensagensChat WHERE Id = @Id`);
+  const target = msgRes.recordset[0];
+  if (!target) return null;
+
+  const existingRes = await pool
+    .request()
+    .input('MensagemId', sql.Int, numericId)
+    .input('Usuario', sql.NVarChar(64), input.userKey)
+    .input('Reacao', sql.NVarChar(20), input.reaction)
+    .query<{ Id: number }>(`
+      SELECT Id FROM dbo.ReacoesChat
+      WHERE MensagemId = @MensagemId AND IdentificadorUsuario = @Usuario AND Reacao = @Reacao
+    `);
+
+  if (existingRes.recordset[0]) {
+    await pool
+      .request()
+      .input('MensagemId', sql.Int, numericId)
+      .input('Usuario', sql.NVarChar(64), input.userKey)
+      .input('Reacao', sql.NVarChar(20), input.reaction)
+      .query(`
+        DELETE FROM dbo.ReacoesChat
+        WHERE MensagemId = @MensagemId AND IdentificadorUsuario = @Usuario AND Reacao = @Reacao
+      `);
+  } else {
+    await pool
+      .request()
+      .input('MensagemId', sql.Int, numericId)
+      .input('Usuario', sql.NVarChar(64), input.userKey)
+      .input('Reacao', sql.NVarChar(20), input.reaction)
+      .query(`
+        INSERT INTO dbo.ReacoesChat (MensagemId, IdentificadorUsuario, Reacao)
+        VALUES (@MensagemId, @Usuario, @Reacao)
+      `);
+  }
+
+  const reactionsRes = await pool
+    .request()
+    .input('MensagemId', sql.Int, numericId)
+    .query<SqlChatReactionRow>(`
+      SELECT MensagemId, IdentificadorUsuario, Reacao
+      FROM dbo.ReacoesChat
+      WHERE MensagemId = @MensagemId
+    `);
+
+  return mapSqlChatMessages([target], reactionsRes.recordset)[0];
 }
 
 export async function deleteChatMessage(

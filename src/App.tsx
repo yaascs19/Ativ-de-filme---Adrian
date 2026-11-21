@@ -12,6 +12,7 @@ import { GENRES } from './data/posters';
 import {
   AuthUser,
   ChatMessage,
+  ChatReactionKey,
   EvaluationChoice,
   GenreFilter,
   MovieItem,
@@ -515,7 +516,8 @@ export default function App() {
 
   const handleSendChatMessage = async (
     text: string,
-    movieIdToAttach?: string
+    movieIdToAttach?: string,
+    replyToId?: string
   ): Promise<boolean> => {
     if (!authUser) {
       openLoginPrompt('Entre na sua conta para participar do chat da comunidade.');
@@ -536,6 +538,7 @@ export default function App() {
           id: msgId,
           text,
           attachedMovieId: movieIdToAttach,
+          replyToId,
         }),
       });
       if (res.status === 401) {
@@ -553,6 +556,41 @@ export default function App() {
       return true;
     } catch {
       return false;
+    }
+  };
+
+  const handleToggleChatReaction = async (
+    messageId: string,
+    reaction: ChatReactionKey
+  ) => {
+    if (!authUser) {
+      openLoginPrompt('Entre na sua conta para reagir às mensagens do chat.');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'CineRoda',
+          ...authHeaders,
+        },
+        body: JSON.stringify({ messageId, reaction }),
+      });
+      if (res.status === 401) {
+        openLoginPrompt('Sua sessão expirou. Entre novamente para reagir.');
+        return;
+      }
+      if (!res.ok) return;
+      const data = (await res.json()) as { message?: ChatMessage };
+      if (data.message) {
+        const updatedMsg = data.message;
+        setMessages((prev) => prev.map((m) => (m.id === updatedMsg.id ? updatedMsg : m)));
+      }
+    } catch {
+      // Falha silenciosa
     }
   };
 
@@ -1109,6 +1147,7 @@ export default function App() {
               attachedMovieId={attachedMovieId}
               onChangeAttachedMovieId={setAttachedMovieId}
               onSendMessage={handleSendChatMessage}
+              onToggleReaction={handleToggleChatReaction}
               onDeleteMessage={handleDeleteChatMessage}
               onSelectMovie={(m) => setSelectedMovieId(m.id)}
               isConnected={isConnected}

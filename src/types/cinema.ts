@@ -13,6 +13,8 @@ export type EvaluationChoice = 'like' | 'dislike';
 
 export type ThemePaletteId = 'cinabrio' | 'cobalto' | 'esmeralda' | 'noturno';
 
+export type ChatReactionKey = 'concordo' | 'querover' | 'amei';
+
 export interface MovieComment {
   id: string;
   movieId: string;
@@ -43,12 +45,20 @@ export interface MovieItem {
   createdAt: number;
 }
 
+export interface ChatReplyPreview {
+  id: string;
+  author: string;
+  text: string;
+}
+
 export interface ChatMessage {
   id: string;
   userKey?: string;
   author: string;
   text: string;
   attachedMovieId?: string;
+  replyTo?: ChatReplyPreview;
+  reactions?: Record<ChatReactionKey, string[]>;
   createdAt: number;
 }
 
