@@ -3,13 +3,25 @@ import {
   createMovie,
   evaluateMovie,
   getHealthStatus,
+  getSqlDiagnostics,
   listChatMessages,
   listMovies,
   MovieGenre,
   sanitizePosterUrl,
   sanitizeText,
   VALID_GENRES,
-} from './db.ts';
+} from './db';
+
+function formatDbError(err: unknown): { code?: string; message: string } {
+  if (err && typeof err === 'object') {
+    const e = err as { code?: unknown; message?: unknown };
+    return {
+      code: typeof e.code === 'string' ? e.code : undefined,
+      message: typeof e.message === 'string' ? e.message.slice(0, 220) : 'Erro desconhecido.',
+    };
+  }
+  return { message: 'Erro desconhecido.' };
+}
 
 export interface ApiRequest {
   method?: string;
@@ -26,9 +38,15 @@ export interface ApiResponse {
 export async function handleHealthRequest(_req: ApiRequest, res: ApiResponse): Promise<void> {
   try {
     const status = await getHealthStatus();
-    res.status(200).json(status);
-  } catch {
-    res.status(500).json({ ok: false, error: 'Erro ao verificar conexão com o banco.' });
+    res.status(200).json({ ...status, diagnostics: getSqlDiagnostics() });
+  } catch (err) {
+    console.error('[api/health] Erro SQL:', err);
+    res.status(500).json({
+      ok: false,
+      error: 'Erro ao verificar conexão com o banco.',
+      details: formatDbError(err),
+      diagnostics: getSqlDiagnostics(),
+    });
   }
 }
 
@@ -106,8 +124,12 @@ export async function handleMoviesRequest(req: ApiRequest, res: ApiResponse): Pr
     }
 
     res.status(405).json({ error: 'Método não permitido.' });
-  } catch {
-    res.status(500).json({ error: 'Erro interno ao processar filmes no banco.' });
+  } catch (err) {
+    console.error('[api/movies] Erro SQL:', err);
+    res.status(500).json({
+      error: 'Erro interno ao processar filmes no banco.',
+      details: formatDbError(err),
+    });
   }
 }
 
@@ -182,7 +204,11 @@ export async function handleChatRequest(req: ApiRequest, res: ApiResponse): Prom
     }
 
     res.status(405).json({ error: 'Método não permitido.' });
-  } catch {
-    res.status(500).json({ error: 'Erro interno ao processar mensagens do chat.' });
+  } catch (err) {
+    console.error('[api/chat] Erro SQL:', err);
+    res.status(500).json({
+      error: 'Erro interno ao processar mensagens do chat.',
+      details: formatDbError(err),
+    });
   }
 }

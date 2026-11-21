@@ -83,13 +83,49 @@ export function sanitizePosterUrl(value: unknown): string {
 }
 
 export function isSqlServerConfigured(): boolean {
-  if (process.env.SQLSERVER_CONNECTION_STRING) return true;
+  if (process.env.SQLSERVER_CONNECTION_STRING?.trim()) return true;
   return Boolean(
-    process.env.SQLSERVER_SERVER &&
-      process.env.SQLSERVER_DATABASE &&
-      process.env.SQLSERVER_USER &&
+    process.env.SQLSERVER_SERVER?.trim() &&
+      process.env.SQLSERVER_DATABASE?.trim() &&
+      process.env.SQLSERVER_USER?.trim() &&
       process.env.SQLSERVER_PASSWORD
   );
+}
+
+function parseSqlServerConfig(): {
+  server: string;
+  database: string;
+  user: string;
+  password: string;
+  port: number;
+  encrypt: boolean;
+} {
+  let rawServer = (process.env.SQLSERVER_SERVER || '').trim();
+  rawServer = rawServer.replace(/^tcp:/i, '').replace(/^https?:\/\//i, '');
+
+  let parsedPort = Number((process.env.SQLSERVER_PORT || '').trim()) || 1433;
+
+  // Suporta formato "servidor.mssql.somee.com,1433" ou "servidor:1433"
+  const commaMatch = rawServer.match(/^([^,]+),(\d+)$/);
+  if (commaMatch) {
+    rawServer = commaMatch[1].trim();
+    parsedPort = Number(commaMatch[2]) || parsedPort;
+  } else {
+    const colonMatch = rawServer.match(/^([^:]+):(\d+)$/);
+    if (colonMatch) {
+      rawServer = colonMatch[1].trim();
+      parsedPort = Number(colonMatch[2]) || parsedPort;
+    }
+  }
+
+  return {
+    server: rawServer,
+    database: (process.env.SQLSERVER_DATABASE || '').trim(),
+    user: (process.env.SQLSERVER_USER || '').trim(),
+    password: process.env.SQLSERVER_PASSWORD || '',
+    port: parsedPort,
+    encrypt: (process.env.SQLSERVER_ENCRYPT || '').trim().toLowerCase() === 'true',
+  };
 }
 
 let sqlPoolPromise: Promise<sql.ConnectionPool> | null = null;
@@ -101,17 +137,21 @@ async function getSqlPool(): Promise<sql.ConnectionPool> {
     sqlPoolPromise = null;
   }
 
-  const connStr = process.env.SQLSERVER_CONNECTION_STRING;
+  const connStr = process.env.SQLSERVER_CONNECTION_STRING?.trim();
+  const cfg = parseSqlServerConfig();
+
   const connectPromise = connStr
     ? new sql.ConnectionPool(connStr).connect()
     : new sql.ConnectionPool({
-        server: process.env.SQLSERVER_SERVER || '',
-        database: process.env.SQLSERVER_DATABASE || '',
-        user: process.env.SQLSERVER_USER || '',
-        password: process.env.SQLSERVER_PASSWORD || '',
-        port: Number(process.env.SQLSERVER_PORT) || 1433,
+        server: cfg.server,
+        database: cfg.database,
+        user: cfg.user,
+        password: cfg.password,
+        port: cfg.port,
+        connectionTimeout: 5500,
+        requestTimeout: 5500,
         options: {
-          encrypt: process.env.SQLSERVER_ENCRYPT === 'true',
+          encrypt: cfg.encrypt,
           trustServerCertificate: true,
         },
         pool: {
@@ -129,13 +169,32 @@ async function getSqlPool(): Promise<sql.ConnectionPool> {
   return sqlPoolPromise;
 }
 
+export function getSqlDiagnostics(): {
+  configured: boolean;
+  server: string;
+  database: string;
+  port: number;
+  encrypt: boolean;
+} {
+  const cfg = parseSqlServerConfig();
+  return {
+    configured: isSqlServerConfigured(),
+    server: cfg.server || '(não definido)',
+    database: cfg.database || '(não definido)',
+    port: cfg.port,
+    encrypt: cfg.encrypt,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Armazenamento JSON local para desenvolvimento/preview sem SQL Server
 // ---------------------------------------------------------------------------
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DATA_DIR = path.resolve(__dirname, '../../data');
+const DATA_DIR = process.env.VERCEL
+  ? '/tmp/cineroda-data'
+  : path.resolve(__dirname, '../../data');
 const DB_PATH = path.resolve(DATA_DIR, 'cineclube.db.json');
 
 function createSeedDatabase(): LocalDatabaseSchema {

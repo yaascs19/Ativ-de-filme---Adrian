@@ -50,7 +50,22 @@ export default function App() {
         fetch('/api/chat'),
       ]);
       if (!moviesRes.ok || !chatRes.ok) {
-        throw new Error('Falha ao carregar os dados.');
+        const failedRes = !moviesRes.ok ? moviesRes : chatRes;
+        let detailText = `HTTP ${failedRes.status}`;
+        try {
+          const errBody = (await failedRes.json()) as {
+            error?: string;
+            details?: { code?: string; message?: string };
+          };
+          if (errBody.details?.message) {
+            detailText = `${errBody.details.code ? `[${errBody.details.code}] ` : ''}${errBody.details.message}`;
+          } else if (errBody.error) {
+            detailText = errBody.error;
+          }
+        } catch {
+          // Resposta sem JSON válido
+        }
+        throw new Error(detailText);
       }
       const moviesData = (await moviesRes.json()) as { movies: MovieItem[] };
       const chatData = (await chatRes.json()) as { messages: ChatMessage[] };
@@ -59,10 +74,11 @@ export default function App() {
       setMessages(chatData.messages);
       setIsConnected(true);
       setLoadError('');
-    } catch {
+    } catch (err) {
       setIsConnected(false);
       if (isInitial) {
-        setLoadError('Não foi possível conectar à API do catálogo.');
+        const reason = err instanceof Error && err.message ? ` (${err.message})` : '';
+        setLoadError(`Não foi possível conectar à API do catálogo.${reason}`);
       }
     } finally {
       if (isInitial) {
