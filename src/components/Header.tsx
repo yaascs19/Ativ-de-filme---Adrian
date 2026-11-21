@@ -1,5 +1,6 @@
 import { Bookmark, Film, LogIn, MessageCircle, Plus, User } from 'lucide-react';
 import { AuthUser } from '../types/cinema';
+import { BrandMark } from './BrandMark';
 
 export type MobileView = 'catalogo' | 'lista' | 'chat';
 
@@ -41,9 +42,12 @@ export function Header({
         <button
           type="button"
           onClick={() => onSelectView('catalogo')}
-          className="font-display text-xl font-bold tracking-tight text-[var(--cr-ink)] whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--cr-accent)] rounded"
+          className="inline-flex items-center gap-2 font-display text-xl font-bold tracking-tight text-[var(--cr-ink)] whitespace-nowrap shrink-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--cr-accent)] rounded"
         >
-          Cine<span className="text-[var(--cr-accent)]">Roda</span>
+          <BrandMark className="h-7 w-7 shrink-0" />
+          <span>
+            Cine<span className="text-[var(--cr-accent)]">Roda</span>
+          </span>
         </button>
 
         {/* Zona 2: Links de navegação em linha única */}
