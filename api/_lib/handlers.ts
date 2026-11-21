@@ -898,17 +898,23 @@ export async function handleChatRequest(req: ApiRequest, res: ApiResponse): Prom
         return;
       }
 
-      const updatedMessage = await toggleChatReaction({
+      const result = await toggleChatReaction({
         messageId,
         userKey: auth.session.user.userKey,
         reaction,
       });
-      if (!updatedMessage) {
+      if (!result.ok) {
+        if (result.code === 'NO_MOVIE_ATTACHED') {
+          res.status(400).json({
+            error: 'As reações ficam disponíveis apenas em mensagens com filme anexado.',
+          });
+          return;
+        }
         res.status(404).json({ error: 'Mensagem não encontrada.' });
         return;
       }
 
-      res.status(200).json({ message: updatedMessage });
+      res.status(200).json({ message: result.message });
       return;
     }
 

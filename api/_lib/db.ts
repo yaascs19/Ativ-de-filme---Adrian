@@ -2527,13 +2527,20 @@ export async function toggleChatReaction(input: {
   messageId: string;
   userKey: string;
   reaction: ChatReactionKey;
-}): Promise<ChatMessageRecord | null> {
+}): Promise<
+  | { ok: true; message: ChatMessageRecord }
+  | { ok: false; code: 'NOT_FOUND' | 'NO_MOVIE_ATTACHED' }
+> {
   if (!isSqlServerConfigured()) {
     const db = loadLocalDb();
     const index = db.messages.findIndex((m) => m.id === input.messageId);
-    if (index === -1) return null;
+    if (index === -1) return { ok: false, code: 'NOT_FOUND' };
 
     const target = db.messages[index];
+    if (!target.attachedMovieId) {
+      return { ok: false, code: 'NO_MOVIE_ATTACHED' };
+    }
+
     const currentList = target.reactions[input.reaction] ?? [];
     const exists = currentList.includes(input.userKey);
     const nextList = exists
@@ -2549,11 +2556,13 @@ export async function toggleChatReaction(input: {
     };
     db.messages[index] = updated;
     saveLocalDb(db);
-    return updated;
+    return { ok: true, message: updated };
   }
 
   const numericId = Number(input.messageId);
-  if (!Number.isInteger(numericId) || numericId <= 0) return null;
+  if (!Number.isInteger(numericId) || numericId <= 0) {
+    return { ok: false, code: 'NOT_FOUND' };
+  }
 
   const pool = await getSqlPool();
   await ensureAuthSchema(pool);
@@ -2563,7 +2572,10 @@ export async function toggleChatReaction(input: {
     .input('Id', sql.Int, numericId)
     .query<SqlChatRow>(`SELECT * FROM dbo.MensagensChat WHERE Id = @Id`);
   const target = msgRes.recordset[0];
-  if (!target) return null;
+  if (!target) return { ok: false, code: 'NOT_FOUND' };
+  if (!target.FilmeAnexadoId) {
+    return { ok: false, code: 'NO_MOVIE_ATTACHED' };
+  }
 
   const existingRes = await pool
     .request()
@@ -2606,7 +2618,7 @@ export async function toggleChatReaction(input: {
       WHERE MensagemId = @MensagemId
     `);
 
-  return mapSqlChatMessages([target], reactionsRes.recordset)[0];
+  return { ok: true, message: mapSqlChatMessages([target], reactionsRes.recordset)[0] };
 }
 
 export async function deleteChatMessage(

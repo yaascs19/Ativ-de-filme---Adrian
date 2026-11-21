@@ -449,72 +449,74 @@ export function CommunityChat({
                       <p className="break-words">{msg.text}</p>
 
                       {linkedMovie && (
-                        <button
-                          type="button"
-                          onClick={() => onSelectMovie(linkedMovie)}
-                          className="mt-2.5 flex w-full items-center gap-2.5 rounded-xl border border-[var(--cr-border)] bg-[var(--cr-surface)] p-2 text-left transition-colors hover:border-[var(--cr-border-strong)] cursor-pointer"
-                        >
-                          {linkedMovie.posterUrl ? (
-                            <img
-                              src={linkedMovie.posterUrl}
-                              alt={linkedMovie.title}
-                              referrerPolicy="no-referrer"
-                              className="h-12 w-9 shrink-0 rounded-md object-cover bg-[#0F172A]"
-                            />
-                          ) : (
-                            <div className="flex h-12 w-9 shrink-0 items-center justify-center rounded-md bg-[#0F172A] text-white">
-                              <Film className="h-4 w-4" aria-hidden="true" />
-                            </div>
-                          )}
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-xs font-bold text-[var(--cr-ink)]">
-                              {linkedMovie.title}
-                            </p>
-                            <p className="truncate text-[11px] text-[var(--cr-ink-muted)] tabular-nums">
-                              {linkedMovie.genre} · {linkedMovie.year}
-                            </p>
-                          </div>
-                        </button>
-                      )}
-
-                      {/* Reações rápidas por mensagem */}
-                      <div className="mt-2.5 flex flex-wrap items-center gap-1.5 pt-1">
-                        {REACTION_OPTIONS.map(({ key, label, Icon }) => {
-                          const users = msg.reactions?.[key] ?? [];
-                          const hasReacted = Boolean(
-                            authUser && users.includes(authUser.userKey)
-                          );
-                          return (
-                            <button
-                              key={key}
-                              type="button"
-                              onClick={() => handleReactionClick(msg.id, key)}
-                              aria-pressed={hasReacted}
-                              title={label}
-                              className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[11px] font-medium transition-colors tabular-nums cursor-pointer ${
-                                hasReacted
-                                  ? 'border-[var(--cr-accent-border)] bg-[var(--cr-surface)] text-[var(--cr-accent-text)] font-semibold'
-                                  : 'border-[var(--cr-border)] bg-[var(--cr-surface)]/70 text-[var(--cr-ink-muted)] hover:border-[var(--cr-border-strong)] hover:text-[var(--cr-ink)]'
-                              }`}
-                            >
-                              <Icon
-                                className={`h-3 w-3 shrink-0 ${
-                                  hasReacted && key === 'amei'
-                                    ? 'fill-current'
-                                    : hasReacted && key === 'querover'
-                                      ? 'fill-current'
-                                      : ''
-                                }`}
-                                aria-hidden="true"
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => onSelectMovie(linkedMovie)}
+                            className="mt-2.5 flex w-full items-center gap-2.5 rounded-xl border border-[var(--cr-border)] bg-[var(--cr-surface)] p-2 text-left transition-colors hover:border-[var(--cr-border-strong)] cursor-pointer"
+                          >
+                            {linkedMovie.posterUrl ? (
+                              <img
+                                src={linkedMovie.posterUrl}
+                                alt={linkedMovie.title}
+                                referrerPolicy="no-referrer"
+                                className="h-12 w-9 shrink-0 rounded-md object-cover bg-[#0F172A]"
                               />
-                              <span>{label}</span>
-                              {users.length > 0 && (
-                                <span className="font-mono text-[10px]">{users.length}</span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
+                            ) : (
+                              <div className="flex h-12 w-9 shrink-0 items-center justify-center rounded-md bg-[#0F172A] text-white">
+                                <Film className="h-4 w-4" aria-hidden="true" />
+                              </div>
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-xs font-bold text-[var(--cr-ink)]">
+                                {linkedMovie.title}
+                              </p>
+                              <p className="truncate text-[11px] text-[var(--cr-ink-muted)] tabular-nums">
+                                {linkedMovie.genre} · {linkedMovie.year}
+                              </p>
+                            </div>
+                          </button>
+
+                          {/* Reações rápidas apenas para indicações com filme anexado */}
+                          <div className="mt-2 flex flex-wrap items-center gap-1.5 pt-1">
+                            {REACTION_OPTIONS.map(({ key, label, Icon }) => {
+                              const users = msg.reactions?.[key] ?? [];
+                              const hasReacted = Boolean(
+                                authUser && users.includes(authUser.userKey)
+                              );
+                              return (
+                                <button
+                                  key={key}
+                                  type="button"
+                                  onClick={() => handleReactionClick(msg.id, key)}
+                                  aria-pressed={hasReacted}
+                                  title={label}
+                                  className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[11px] font-medium transition-colors tabular-nums cursor-pointer ${
+                                    hasReacted
+                                      ? 'border-[var(--cr-accent-border)] bg-[var(--cr-surface)] text-[var(--cr-accent-text)] font-semibold'
+                                      : 'border-[var(--cr-border)] bg-[var(--cr-surface)]/70 text-[var(--cr-ink-muted)] hover:border-[var(--cr-border-strong)] hover:text-[var(--cr-ink)]'
+                                  }`}
+                                >
+                                  <Icon
+                                    className={`h-3 w-3 shrink-0 ${
+                                      hasReacted && (key === 'amei' || key === 'querover')
+                                        ? 'fill-current'
+                                        : ''
+                                    }`}
+                                    aria-hidden="true"
+                                  />
+                                  <span>{label}</span>
+                                  {users.length > 0 && (
+                                    <span className="font-mono text-[10px]">
+                                      {users.length}
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                 </Fragment>
